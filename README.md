@@ -1,4 +1,4 @@
-# FletApp app
+# Data Organizer - Flet App
 
 ## Run the app
 
