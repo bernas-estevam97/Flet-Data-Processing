@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import sys
 #import time
 #from multiprocessing import Pool
 #from pathlib import Path
@@ -78,41 +79,68 @@ def create_new_excel_mean_time(idx, file, total_files, output_folder, experiment
     return f"Added info to Excel from file {idx + 1} of {total_files}: {os.path.basename(file)} info added"
 
 def main():
-    # Get folder path input from user
-    folder_input = input('Which folder has your filtered xlsx files? ')
-    if os.path.isdir(folder_input):
-        print('Folder selected: ', folder_input)
-    elif folder_input == "":
-        print("You didn't input any path.")
-        return
-    else:
-        print('Invalid path input.')
-        return
-    
-    folder_output = input('In which folder do you want your excel file to be at: ')
-
-    if os.path.isdir(folder_output):
-        print('File destination: ', folder_output)
-    elif folder_output == "":
-        print("No input. Saving to same folder as your filtered excel files")
-        folder_output = folder_input
-    else:
-        print('Invalid path input.')
-        return
+    # 1. Catch variables from Flet via sys.argv
+    if len(sys.argv) > 1:
+        folder_input = sys.argv[1]
+        folder_output = sys.argv[2]
+        experiment_name = sys.argv[3]
         
-    experiment_name = input('What experiment are these files from (footprint, beam, swimming, gridwalk)? ')
+        if not os.path.isdir(folder_input):
+            print(f"[ERROR] Invalid input path: {folder_input}")
+            sys.exit(1)
+            
+        # If the user left the output folder blank in the Flet app, default to input
+        if folder_output.strip() == "":
+            print("No output folder provided. Saving to the same folder as the input.")
+            folder_output = folder_input
+        elif not os.path.isdir(folder_output):
+            print(f"[ERROR] Invalid output path: {folder_output}")
+            sys.exit(1)
+            
+        print(f"🚀 Running via Flet UI in automated mode...")
+        print(f"📁 Input: {folder_input}")
+        print(f"📁 Output: {folder_output}")
+        print(f"⚙️  Experiment: {experiment_name}")
+
+    # 2. Fallback to terminal inputs if you run it manually
+    else:
+        folder_input = input('Which folder has your filtered xlsx files? ').strip()
+        if os.path.isdir(folder_input):
+            print('Folder selected: ', folder_input)
+        elif folder_input == "":
+            print("You didn't input any path.")
+            return
+        else:
+            print('Invalid path input.')
+            return
+        
+        folder_output = input('In which folder do you want your excel file to be at: ').strip()
+        if os.path.isdir(folder_output):
+            print('File destination: ', folder_output)
+        elif folder_output == "":
+            print("No input. Saving to same folder as your filtered excel files")
+            folder_output = folder_input
+        else:
+            print('Invalid path input.')
+            return
+            
+        experiment_name = input('What experiment are these files from (footprint, beam, swimming, gridwalk)? ')
+
+    # --- 3. EXECUTE PROCESSING ---
+    file_paths = [os.path.join(folder_input, p) for p in os.listdir(folder_input) if p.endswith('filtered.xlsx')]
     
-    # Get the list of files in the folder (filtering only filtered xlsx files)
-    file_paths = [os.path.join(folder_input, str(p)) for p in os.listdir(folder_input) if p.endswith('filtered.xlsx')]
     if not file_paths:
-       print(f"No files found in the folder '{folder_input}'.")
-       return
+        print(f"⚠️ No 'filtered.xlsx' files found in the folder '{folder_input}'.")
+        return
     
     total_files = len(file_paths)
+    print(f"Found {total_files} files to process. Starting...")
 
     for idx, file in enumerate(file_paths):
         result = create_new_excel_mean_time(idx, file, total_files, folder_output, experiment_name)
         print(result)
+        
+    print("\n✅ Descriptive Statistics processing complete.")
 
 if __name__ == '__main__':
     print('Ctrl+C to terminate program at any time.\n')
@@ -120,3 +148,4 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         print('\nProgram terminated by user. Exiting function...')
+        sys.exit(0)
