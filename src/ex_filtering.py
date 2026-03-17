@@ -1,92 +1,95 @@
 import os
 import pandas as pd
+import numpy as np
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import sys
 
+# --- GLOBALS (Moved outside worker to save initialization time) ---
+CHOICE_MAP = {
+    "0": '/Feature/Tail/Tip_X',
+    "1": '/Feature/Tail/Center_X',
+    "2": '/Feature/Tail/Base_X',
+    "3": ['/Feature/Paw/Hind/Left_X', '/Feature/Paw/Hind/Right_X']
+}
+
+SUBTRACTION_MAP = {
+    ("0", "groundwalk", "old"): 0.515,
+    ("1", "groundwalk", "old"): 0.505,
+    ("0", "groundwalk", "new"): 0.491,
+    ("0", "beamwalk", "old"): 0.44,
+    ("1", "beamwalk", "old"): 0.438,
+    ("0", "beamwalk", "new"): 0.426,
+    ("0", "gridwalk", "old"): 0.495,
+    ("0", "gridwalk", "new"): 0.473,
+    ("1", "gridwalk", "old"): 0.483,
+    ("0", "swimming", "old"): 0.452
+}
+
 # --- WORKER FUNCTION ---
-# Now accepts two separate arguments:
-# 1. file_info_tuple: The variable data (index, file path, counts)
-# 2. choice: The constant setting (0, 1, or 2)
 def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new):
     # Unpack the file info
     index, file_path, total_files = file_info_tuple
     
-    choice_map = {
-        "0": '/Feature/Tail/Tip_X',
-        "1": '/Feature/Tail/Center_X',
-        "2": '/Feature/Tail/Base_X',
-        "3": ['/Feature/Paw/Hind/Left_X', '/Feature/Paw/Hind/Right_X']
-    }
-    
-    # --- SUBTRACTION CONFIGURATION MAP ---
-    # format: (animal, experiment, age) : value
-    subtraction_map = {
-        ("0", "groundwalk", "old"): 0.515,
-        ("1", "groundwalk", "old"): 0.505,
-        ("0", "groundwalk", "new"): 0.491,
-        ("0", "beamwalk", "old"): 0.44,
-        ("1", "beamwalk", "old"): 0.438,
-        ("0", "beamwalk", "new"): 0.426,
-        ("0", "gridwalk", "old"): 0.495,
-        ("0", "gridwalk", "new"): 0.473,
-        ("1", "gridwalk", "old"): 0.483,
-        ("0", "swimming", "old"): 0.452
-    }
-
-    column_targets = choice_map.get(choice)
+    column_targets = CHOICE_MAP.get(choice)
     if not column_targets:
          return f"[ERROR] Invalid choice '{choice}'."
 
     try:
-        with pd.ExcelFile(file_path) as xls:
+        # OPTIMIZATION: Use calamine for vastly faster reads
+        with pd.ExcelFile(file_path, engine='calamine') as xls:
             df_raw = pd.read_excel(xls, sheet_name='Positions (used)')
             df_kin = pd.read_excel(xls, sheet_name='Kinematics')
 
-        # 1. Find Start/End Indices
-        if isinstance(column_targets, list):
-            mask = df_raw[column_targets].notna().all(axis=1)
-        else:
-            mask = df_raw[column_targets].notna()
-
-        valid_indices = df_raw.index[mask]
-        if valid_indices.empty:
-            return f"[WARNING] File '{os.path.basename(file_path)}': No valid data overlap."
+        # --- 1. Find Start/End Indices (Threshold-based) ---
+        threshold = 0.00001
         
-        start_index = valid_indices[0]
-        last_index = df_raw['/Feature/Head/Nose_X'].last_valid_index()
+        # Clean up entirely blank rows to ensure 1:1 index mapping
+        df_raw_clean = df_raw.dropna(how='all').reset_index(drop=True)
+        df_kin_clean = df_kin.dropna(how='all').reset_index(drop=True)
 
-        # 2. Filter Kinematics
-        df_kin_filtered = df_kin.iloc[start_index : last_index + 1].copy()
+        if isinstance(column_targets, list):
+            first_vals = df_raw_clean[column_targets].iloc[0]
+            change_mask = ((df_raw_clean[column_targets] - first_vals).abs() > threshold).any(axis=1)
+            movement_indices = df_raw_clean.index[change_mask]
+        else:
+            first_val = df_raw_clean[column_targets].iloc[0]
+            movement_indices = df_raw_clean.index[(df_raw_clean[column_targets] - first_val).abs() > threshold]
+        
+        # Safety check: If the animal never moved past the threshold
+        if movement_indices.empty:
+            return f"[WARNING] File '{os.path.basename(file_path)}': No movement detected above threshold."
+
+        start_index = movement_indices[0]
+
+        nose_col = '/Feature/Head/Nose_X'
+        if nose_col in df_raw_clean.columns:
+            final_static_val = df_raw_clean[nose_col].iloc[-1]
+            end_movement_indices = df_raw_clean.index[(df_raw_clean[nose_col] - final_static_val).abs() > threshold]
+            last_index = end_movement_indices[-1] if not end_movement_indices.empty else len(df_raw_clean) - 1
+        else:
+            last_index = len(df_raw_clean) - 1
+
+        # --- 2. Filter Kinematics ---
+        # NOTE: We use df_kin_clean here so the indices match perfectly with df_raw_clean
+        df_kin_filtered = df_kin_clean.iloc[start_index : last_index + 1].copy()
 
         # 3. Apply Subtraction & Inversion (ONLY if combination exists)
-
-        # IF VIDEO PROCESSING WAS DONE WITH WRONG OFFSET MAYBE NEED TO SUBTRACT MORE 
-        #-6.8 ---> BEAM
-        #  
-
-        target_indices = [5, 6, 9, 11, 13, 15, 16, 17]
+        target_indices = [5, 6, 9, 11, 13, 17]
         current_combo = (animal_choice, experiment, old_or_new)
         
-        value_to_subtract = subtraction_map.get(current_combo)
+        value_to_subtract = SUBTRACTION_MAP.get(current_combo)
 
         if value_to_subtract is not None:
             # Applying fixed_value - x logic
             df_kin_filtered.iloc[:, target_indices] = value_to_subtract - df_kin_filtered.iloc[:, target_indices]
         else:
-            # This is your "if no combination is found" safety net
-            # It logs to the console so you know which files didn't get modified
             print(f"  [INFO] No subtraction rule for {current_combo}. Skipping inversion.")
 
-        # --- NEW: Replace zeros in columns AA (26) through AX (49) ---
-        # We use index 50 as the stop because slicing [start:stop] is exclusive.
-        
-        # Select the target range
+        # --- OPTIMIZATION: Replace zeros using np.where instead of .replace() ---
         cols_to_replace_zero = df_kin_filtered.columns[26:50]
-        
-        # Replace zeros with NaN so they are ignored by median/mean/std
-        df_kin_filtered[cols_to_replace_zero] = df_kin_filtered[cols_to_replace_zero].replace(0, pd.NA)
-
+        for col in cols_to_replace_zero:
+            df_kin_filtered[col] = np.where(df_kin_filtered[col] == 0, np.nan, df_kin_filtered[col])
 
         # 4. Hind Paw Timestamp Logic
         hind_paw_col = '/Feature/Paw/Tao/Hind/Left_X'
@@ -96,23 +99,28 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
                 hind_timestamp = df_raw.loc[hind_reach.index[0], "Time"]
                 cols_F_to_S = df_kin_filtered.columns[5:19]
                 mask_time = df_kin_filtered['Time'] > hind_timestamp
-                df_kin_filtered.loc[mask_time, cols_F_to_S] = pd.NA
+                df_kin_filtered.loc[mask_time, cols_F_to_S] = np.nan # Replaced pd.NA with np.nan
 
-        # 5. Statistics and Saving... (rest of your logic remains the same)
+        # 5. Statistics and Saving
         time_series = df_kin_filtered['Time'].dropna()
         time_duration = (time_series.iloc[-1] - time_series.iloc[0]) if not time_series.empty else 0
         numeric_cols = df_kin_filtered.columns[1:] 
+        
         stats_block = df_kin_filtered[numeric_cols].agg(['mean', 'std', 'median', 'min', 'max'])
         stats_block.index = stats_block.index.str.title()
         stats_output = stats_block.reset_index()
         stats_output.columns = [df_kin_filtered.columns[0]] + list(numeric_cols)
 
-        duration_df = pd.DataFrame([[pd.NA] * len(df_kin_filtered.columns)], columns=df_kin_filtered.columns)
-        duration_df.iloc[0, 0] = 'Time Duration'
-        duration_df.iloc[0, 1] = time_duration
+        # --- FIX: Avoid Pandas FutureWarning by building a list first ---
+        row_data = [np.nan] * len(df_kin_filtered.columns)
+        row_data[0] = 'Time Duration'
+        row_data[1] = time_duration
+        duration_df = pd.DataFrame([row_data], columns=df_kin_filtered.columns)
 
         output_file = os.path.splitext(file_path)[0] + '_filtered.xlsx'
-        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+        
+        # OPTIMIZATION: Use xlsxwriter for much faster creation of new files
+        with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
             df_raw.to_excel(writer, sheet_name='Positions (used)', index=False)
             df_kin_filtered.to_excel(writer, sheet_name='Kinematics', index=False)
             start_row = len(df_kin_filtered) + 2
@@ -128,13 +136,10 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
 # --- MAIN EXECUTION ---
 def main():
     # 1. Catch variables from Flet via sys.argv
-    # sys.argv[0] is the script name itself, sys.argv[1] is the first argument (data_path)
-    # 1. Catch variables from Flet via sys.argv
     if len(sys.argv) > 1:
         folder_input = sys.argv[1]
         
         # Unpack the new arguments sent from the Flet dropdowns
-        # We use a fallback just in case the arguments weren't sent properly
         choice = sys.argv[2] if len(sys.argv) > 2 else "0"
         animal_choice = sys.argv[3] if len(sys.argv) > 3 else "0"
         experiment = sys.argv[4] if len(sys.argv) > 4 else "groundwalk"
@@ -187,7 +192,6 @@ def main():
     current_combo = (animal_choice, experiment, old_or_new)
     if current_combo not in valid_combos:
         print(f"\n⚠️  WARNING: The combination {current_combo} does not have a subtraction value.")
-        # If running via UI, we bypass the confirm input and proceed automatically
         if len(sys.argv) == 1:
             confirm = input("Continue anyway without coordinate inversion? (y/n): ").lower()
             if confirm != 'y':

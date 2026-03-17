@@ -9,7 +9,10 @@ authors = [
 ]
 dependencies = [
     "flet>=0.80.5",
+    "numpy>=2.2.6",
     "pandas>=2.3.3",
+    "python-calamine>=0.6.2",
+    "xlsxwriter>=3.2.9",
 ]
 
 [dependency-groups]

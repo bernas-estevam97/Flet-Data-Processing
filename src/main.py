@@ -1,5 +1,6 @@
 import flet as ft
 import subprocess
+import sys
 
 def main(page: ft.Page):
     # 1. App Configuration
@@ -59,15 +60,46 @@ def main(page: ft.Page):
         ], expand=True
     )
 
+    # ==========================================
+    # Terminal UI Components (Filtering Page)
+    # ==========================================
+    def clear_terminal(e):
+        terminal_output.controls.clear()
+        terminal_output.controls.append(ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True))
+        e.control.page.update()
+
+    clear_button = ft.IconButton(
+        icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
+        tooltip="Clear Terminal", on_click=clear_terminal, icon_size=18
+    )
+
     terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=True)
     terminal_window = ft.Container(
         content=terminal_output, height=150, bgcolor=ft.Colors.BLACK_87,
         border_radius=5, padding=10, border=ft.Border.all(1, ft.Colors.WHITE_24)
     )
 
+    terminal_section = ft.Column([
+        ft.Row([
+            ft.Text("Live Terminal Output", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
+            clear_button
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        terminal_window
+    ])
+
     # ==========================================
-    # 2B. UI Components Setup (Statistics Page)
+    # UI Components Setup (Statistics Page)
     # ==========================================
+    def clear_stats_terminal(e):
+        stats_terminal_output.controls.clear()
+        stats_terminal_output.controls.append(ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True))
+        e.control.page.update()
+
+    stats_clear_button = ft.IconButton(
+        icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
+        tooltip="Clear Terminal", on_click=clear_stats_terminal, icon_size=18
+    )
+
     stats_status_text = ft.Text("System Ready", color=ft.Colors.BLUE_GREY_400)
 
     stats_input_folder = ft.TextField(label="Filtered Data Folder", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
@@ -91,6 +123,14 @@ def main(page: ft.Page):
         content=stats_terminal_output, height=150, bgcolor=ft.Colors.BLACK_87,
         border_radius=5, padding=10, border=ft.Border.all(1, ft.Colors.WHITE_24)
     )
+
+    stats_terminal_section = ft.Column([
+        ft.Row([
+            ft.Text("Live Terminal Output", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
+            stats_clear_button
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        stats_terminal_window
+    ])
 
     # ==========================================
     # 3. Directory Picker Logic
@@ -157,21 +197,21 @@ def main(page: ft.Page):
         status_text.color = ft.Colors.AMBER_400
         
         terminal_output.controls.clear()
-        terminal_output.controls.append(ft.Text("Starting filtering script...", color=ft.Colors.GREEN_400, font_family="monospace"))
+        terminal_output.controls.append(ft.Text("Starting filtering script...", color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True))
         page.update()
 
         try:
             command = [
-                "python", "-u", "src/new_excel_filtering_all.py", 
+                sys.executable, "-u", "src/ex_filtering.py", 
                 data_path, choice, animal, experiment, camera
             ]
             process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', text=True, bufsize=1
             )
             for line in iter(process.stdout.readline, ''):
                 if line:
                     terminal_output.controls.append(
-                        ft.Text(line.strip(), color=ft.Colors.GREEN_400, font_family="monospace", size=12)
+                        ft.Text(line.strip(), color=ft.Colors.GREEN_400, font_family="Consolas",selectable=True, size=12)
                     )
                     page.update() 
             process.stdout.close()
@@ -187,7 +227,7 @@ def main(page: ft.Page):
         except Exception as err:
             status_text.value = f"Error: {err}"
             status_text.color = ft.Colors.RED_400
-            terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="monospace"))
+            terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="Consolas", selectable=True))
             
         page.update()
 
@@ -205,21 +245,21 @@ def main(page: ft.Page):
         stats_status_text.value = "Generating statistics..."
         stats_status_text.color = ft.Colors.AMBER_400
         stats_terminal_output.controls.clear()
-        stats_terminal_output.controls.append(ft.Text("Starting descriptive statistics script...", color=ft.Colors.GREEN_400, font_family="monospace"))
+        stats_terminal_output.controls.append(ft.Text("Starting descriptive statistics script...", color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True))
         page.update()
 
         try:
             command = [
-                "python", "-u", "src/descriptive_analysis.py", 
+                sys.executable, "-u", "src/desc_analysis.py", 
                 data_path, out_path, experiment
             ]
             process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', text=True, bufsize=1
             )
             for line in iter(process.stdout.readline, ''):
                 if line:
                     stats_terminal_output.controls.append(
-                        ft.Text(line.strip(), color=ft.Colors.GREEN_400, font_family="monospace", size=12)
+                        ft.Text(line.strip(), color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True, size=12)
                     )
                     page.update() 
             process.stdout.close()
@@ -235,7 +275,7 @@ def main(page: ft.Page):
         except Exception as err:
             stats_status_text.value = f"Error: {err}"
             stats_status_text.color = ft.Colors.RED_400
-            stats_terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="monospace"))
+            stats_terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="Consolas", selectable=True))
             
         page.update()
 
@@ -291,8 +331,7 @@ def main(page: ft.Page):
             ft.Row([experiment_dropdown, camera_dropdown], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             
             ft.Divider(height=20),
-            ft.Text("Live Terminal Output", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
-            terminal_window,
+            terminal_section,
             ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
             
             ft.Row(
@@ -325,8 +364,7 @@ def main(page: ft.Page):
             ft.Row([stats_experiment_dropdown], alignment=ft.MainAxisAlignment.START),
             
             ft.Divider(height=20),
-            ft.Text("Live Terminal Output", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
-            stats_terminal_window,
+            stats_terminal_section,
             ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
 
             ft.Row(
