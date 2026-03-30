@@ -8,7 +8,7 @@ authors = [
     { name = "Bernardo", email = "you@example.com" }
 ]
 dependencies = [
-    "flet>=0.80.5",
+    "flet[all]>=0.80.5",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
     "python-calamine>=0.6.2",

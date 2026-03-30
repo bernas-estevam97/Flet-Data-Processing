@@ -1,13 +1,12 @@
 import os
 import sys
+import re
 import pandas as pd
 from multiprocessing import Pool, cpu_count
 
 # --- FIX: Ensure UTF-8 output for Flet UI text box emojis ---
 # if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
 #     sys.stdout.reconfigure(encoding='utf-8')
-
-# Removed the deprecated pd.set_option line that was causing the warning
 
 def extract_data_from_excel(file_path):
     """
@@ -17,6 +16,7 @@ def extract_data_from_excel(file_path):
     file_id = os.path.basename(file_path)
     
     try:
+        # calamine is extremely fast for reading Excel
         df_filtered = pd.read_excel(file_path, sheet_name='Kinematics', header=None, engine='calamine')
     except Exception as e:
         error_msg = f"❌ Error reading {file_id}: {e}"
@@ -25,30 +25,38 @@ def extract_data_from_excel(file_path):
 
     parts = file_id.split("_")
     file_id_split = "_".join(parts[:parts.index("out")]) if "out" in parts else file_id
+    
+    # NEW LOGIC: Remove trailing trial numbers (e.g., "_01", "_02") to get the base subject ID
+    base_id = re.sub(r'_\d+$', '', file_id_split)
 
     # 1. Extract the Header Row
     header_row_raw = df_filtered.iloc[0]
     header_stats = ["Ids"] + header_row_raw.iloc[1:].tolist()
 
+    # OPTIMIZATION: Convert the label column to lowercase strings ONCE instead of inside the loop
+    first_col = df_filtered.iloc[:, 0].astype(str).str.lower()
+
     # 2. Extract Statistics
     stats_to_extract = {
-        "Mean": "Mean", "Std": "Std", "Median": "Median", 
-        "Min": "Min", "Max": "Max"
+        "mean": "Mean", "std": "Std", "median": "Median", 
+        "min": "Min", "max": "Max"
     }
     extracted_stats = {}
     
     for keyword, sheet_name in stats_to_extract.items():
-        mask = df_filtered.iloc[:, 0].astype(str).str.contains(keyword, case=False, na=False)
+        # Searching is faster since first_col is already lowercased and string-cast
+        mask = first_col.str.contains(keyword, na=False)
         found_rows = df_filtered[mask]
 
         if not found_rows.empty:
             stat_values = found_rows.iloc[-1]
-            stat_data = [file_id_split] + stat_values.iloc[1:].tolist()
+            # Use base_id so trials share the same identifier
+            stat_data = [base_id] + stat_values.iloc[1:].tolist()
             extracted_stats[sheet_name] = stat_data
 
     # 3. Extract Time Duration
     duration_val = None
-    mask_duration = df_filtered.iloc[:, 0].astype(str).str.contains("Duration", case=False, na=False)
+    mask_duration = first_col.str.contains("duration", na=False)
     found_duration_rows = df_filtered[mask_duration]
     
     if not found_duration_rows.empty:
@@ -60,7 +68,7 @@ def extract_data_from_excel(file_path):
     return {
         'error': None,
         'file_path': file_path,
-        'file_id_split': file_id_split,
+        'base_id': base_id, # Replaced file_id_split with base_id
         'header_stats': header_stats,
         'extracted_stats': extracted_stats,
         'duration_val': duration_val
@@ -118,7 +126,7 @@ def main():
     with Pool(processes=num_cores) as pool:
         results = pool.map(extract_data_from_excel, file_paths)
 
-    print("\n✅ Data extraction complete! Formatting and writing to Excel...")
+    print("\n✅ Data extraction complete! Grouping trials and writing to Excel...")
 
     # --- PHASE 2: WRITE SEQUENTIALLY TO ONE EXCEL FILE ---
     compiled_stats = {sheet: [] for sheet in ["Mean", "Std", "Median", "Min", "Max"]}
@@ -136,7 +144,7 @@ def main():
             compiled_stats[sheet_name].append(row_data)
 
         if res['duration_val'] is not None:
-            compiled_durations.append([res['file_id_split'], res['duration_val']])
+            compiled_durations.append([res['base_id'], res['duration_val']])
 
     sample_path_split = os.path.normpath(file_paths[0]).split(os.path.sep)
     dir_part_1 = sample_path_split[-3] if len(sample_path_split) >= 3 else "folder"
@@ -150,16 +158,26 @@ def main():
         # 1. Write the stat sheets
         for sheet_name, rows in compiled_stats.items():
             if rows:
-                # Add infer_objects to securely type cast without silent downcasting warnings
-                df = pd.DataFrame(rows, columns=master_header).infer_objects()
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                df = pd.DataFrame(rows, columns=master_header)
+                
+                # NEW LOGIC: Convert to numeric, group by 'Ids', and calculate the mean
+                numeric_cols = df.columns.drop('Ids')
+                df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                df_grouped = df.groupby('Ids', as_index=False)[numeric_cols].mean()
+                
+                df_grouped.to_excel(writer, sheet_name=sheet_name, index=False)
 
         # 2. Write the Time Duration sheet
         if compiled_durations:
-            df_duration = pd.DataFrame(compiled_durations, columns=["Ids", "Time Duration"]).infer_objects()
-            df_duration.to_excel(writer, sheet_name="Time Duration", index=False)
+            df_duration = pd.DataFrame(compiled_durations, columns=["Ids", "Time Duration"])
+            
+            # NEW LOGIC: Convert duration to numeric and group by ID to get the mean
+            df_duration['Time Duration'] = pd.to_numeric(df_duration['Time Duration'], errors='coerce')
+            df_duration_grouped = df_duration.groupby('Ids', as_index=False).mean()
+            
+            df_duration_grouped.to_excel(writer, sheet_name="Time Duration", index=False)
 
-    print(f"\n🎉 Success! Data perfectly ordered and saved to:\n➡️ {output_filename}")
+    print(f"\n🎉 Success! Data averaged across trials and saved to:\n➡️ {output_filename}")
 
 if __name__ == '__main__':
     try:

@@ -4,8 +4,12 @@ import numpy as np
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import sys
+import warnings
 
-# --- GLOBALS (Moved outside worker to save initialization time) ---
+# Suppress pandas concatenation warnings for all-NA columns
+warnings.filterwarnings("ignore", category=FutureWarning, module="pandas.core.reshape.concat")
+
+# --- GLOBALS ---
 CHOICE_MAP = {
     "0": '/Feature/Tail/Tip_X',
     "1": '/Feature/Tail/Center_X',
@@ -28,7 +32,6 @@ SUBTRACTION_MAP = {
 
 # --- WORKER FUNCTION ---
 def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new):
-    # Unpack the file info
     index, file_path, total_files = file_info_tuple
     
     column_targets = CHOICE_MAP.get(choice)
@@ -36,15 +39,12 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
          return f"[ERROR] Invalid choice '{choice}'."
 
     try:
-        # OPTIMIZATION: Use calamine for vastly faster reads
         with pd.ExcelFile(file_path, engine='calamine') as xls:
             df_raw = pd.read_excel(xls, sheet_name='Positions (used)')
             df_kin = pd.read_excel(xls, sheet_name='Kinematics')
 
-        # --- 1. Find Start/End Indices (Threshold-based) ---
+        # --- 1. Find Start/End Indices ---
         threshold = 0.00001
-        
-        # Clean up entirely blank rows to ensure 1:1 index mapping
         df_raw_clean = df_raw.dropna(how='all').reset_index(drop=True)
         df_kin_clean = df_kin.dropna(how='all').reset_index(drop=True)
 
@@ -56,7 +56,6 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             first_val = df_raw_clean[column_targets].iloc[0]
             movement_indices = df_raw_clean.index[(df_raw_clean[column_targets] - first_val).abs() > threshold]
         
-        # Safety check: If the animal never moved past the threshold
         if movement_indices.empty:
             return f"[WARNING] File '{os.path.basename(file_path)}': No movement detected above threshold."
 
@@ -71,27 +70,21 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             last_index = len(df_raw_clean) - 1
 
         # --- 2. Filter Kinematics ---
-        # NOTE: We use df_kin_clean here so the indices match perfectly with df_raw_clean
         df_kin_filtered = df_kin_clean.iloc[start_index : last_index + 1].copy()
 
-        # 3. Apply Subtraction & Inversion (ONLY if combination exists)
+        # --- 3. Apply Subtraction & Inversion ---
         target_indices = [5, 6, 9, 11, 13, 17]
         current_combo = (animal_choice, experiment, old_or_new)
-        
         value_to_subtract = SUBTRACTION_MAP.get(current_combo)
 
         if value_to_subtract is not None:
-            # Applying fixed_value - x logic
             df_kin_filtered.iloc[:, target_indices] = value_to_subtract - df_kin_filtered.iloc[:, target_indices]
-        else:
-            print(f"  [INFO] No subtraction rule for {current_combo}. Skipping inversion.")
 
-        # --- OPTIMIZATION: Replace zeros using np.where instead of .replace() ---
         cols_to_replace_zero = df_kin_filtered.columns[26:50]
         for col in cols_to_replace_zero:
             df_kin_filtered[col] = np.where(df_kin_filtered[col] == 0, np.nan, df_kin_filtered[col])
 
-        # 4. Hind Paw Timestamp Logic
+        # --- 4. Hind Paw Timestamp Logic ---
         hind_paw_col = '/Feature/Paw/Tao/Hind/Left_X'
         if hind_paw_col in df_raw.columns and 'Time' in df_raw.columns:
             hind_reach = df_raw[df_raw[hind_paw_col] >= -0.016]
@@ -99,9 +92,9 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
                 hind_timestamp = df_raw.loc[hind_reach.index[0], "Time"]
                 cols_F_to_S = df_kin_filtered.columns[5:19]
                 mask_time = df_kin_filtered['Time'] > hind_timestamp
-                df_kin_filtered.loc[mask_time, cols_F_to_S] = np.nan # Replaced pd.NA with np.nan
+                df_kin_filtered.loc[mask_time, cols_F_to_S] = np.nan 
 
-        # 5. Statistics and Saving
+        # --- 5. Statistics and Saving (OPTIMIZED) ---
         time_series = df_kin_filtered['Time'].dropna()
         time_duration = (time_series.iloc[-1] - time_series.iloc[0]) if not time_series.empty else 0
         numeric_cols = df_kin_filtered.columns[1:] 
@@ -111,35 +104,37 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
         stats_output = stats_block.reset_index()
         stats_output.columns = [df_kin_filtered.columns[0]] + list(numeric_cols)
 
-        # --- FIX: Avoid Pandas FutureWarning by building a list first ---
         row_data = [np.nan] * len(df_kin_filtered.columns)
         row_data[0] = 'Time Duration'
         row_data[1] = time_duration
         duration_df = pd.DataFrame([row_data], columns=df_kin_filtered.columns)
 
+        # 🚀 NEW: Combine everything in memory before writing
+        spacer = pd.DataFrame([[np.nan] * len(df_kin_filtered.columns)], columns=df_kin_filtered.columns)
+        
+        final_kinematic_sheet = pd.concat([
+            df_kin_filtered, 
+            spacer, 
+            duration_df, 
+            stats_output
+        ], ignore_index=True)
+
         output_file = os.path.splitext(file_path)[0] + '_filtered.xlsx'
         
-        # OPTIMIZATION: Use xlsxwriter for much faster creation of new files
+        # 🚀 NEW: Write the sheet exactly once
         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
             df_raw.to_excel(writer, sheet_name='Positions (used)', index=False)
-            df_kin_filtered.to_excel(writer, sheet_name='Kinematics', index=False)
-            start_row = len(df_kin_filtered) + 2
-            duration_df.to_excel(writer, sheet_name='Kinematics', startrow=start_row, index=False, header=False)
-            stats_output.to_excel(writer, sheet_name='Kinematics', startrow=start_row + 1, index=False, header=False)
+            final_kinematic_sheet.to_excel(writer, sheet_name='Kinematics', index=False)
 
         return f"Processed file {index + 1} of {total_files}: {os.path.basename(file_path)}"
 
     except Exception as e:
         return f"[ERROR] File '{os.path.basename(file_path)}': {e}"
 
-
 # --- MAIN EXECUTION ---
 def main():
-    # 1. Catch variables from Flet via sys.argv
     if len(sys.argv) > 1:
         folder_input = sys.argv[1]
-        
-        # Unpack the new arguments sent from the Flet dropdowns
         choice = sys.argv[2] if len(sys.argv) > 2 else "0"
         animal_choice = sys.argv[3] if len(sys.argv) > 3 else "0"
         experiment = sys.argv[4] if len(sys.argv) > 4 else "groundwalk"
@@ -153,7 +148,6 @@ def main():
             print(f"[ERROR] The provided path is not a valid directory: {folder_input}")
             sys.exit(1)
 
-    # 2. Fallback to terminal inputs if you run it manually without Flet
     else:
         while True:
             folder_input = input('\nWhich folder has your .xlsx files? ').strip()
@@ -180,7 +174,6 @@ def main():
         print("\nCamera Settings: Old | New")
         old_or_new = get_valid_input("Old or New settings? ", ["old", "new"], "Choose 'old' or 'new'.")
 
-    # --- 3. PRE-FLIGHT COMBO CHECK ---
     valid_combos = [
         ("0", "groundwalk", "old"), ("0", "groundwalk", "new"),
         ("0", "beamwalk", "old"),   ("0", "beamwalk", "new"),
@@ -197,7 +190,6 @@ def main():
             if confirm != 'y':
                 return
 
-    # --- 4. PREPARE FILE LIST ---
     file_paths = [
         os.path.join(folder_input, f) 
         for f in os.listdir(folder_input) 
@@ -210,7 +202,9 @@ def main():
 
     total_files = len(file_paths)
     indexed_files = [(i, f, total_files) for i, f in enumerate(file_paths)]
-    num_processes = os.cpu_count() or 4
+    
+    # 🚀 NEW: Leave 1 core free to prevent UI lockups
+    num_processes = max(1, (os.cpu_count() or 4) - 1)
     
     print(f"\n⚙️  Processing {total_files} files using {num_processes} cores...")
     

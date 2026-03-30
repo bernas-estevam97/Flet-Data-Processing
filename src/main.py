@@ -11,7 +11,8 @@ def main(page: ft.Page):
     
     page.window_width = 1000 
     page.window_height = 800 
-    page.padding = 0 
+    page.padding = 0
+    hover_style = ft.ButtonStyle(mouse_cursor=ft.MouseCursor.CLICK)
 
     # ==========================================
     # 2. UI Components Setup (Data Filtering Page)
@@ -70,7 +71,7 @@ def main(page: ft.Page):
 
     clear_button = ft.IconButton(
         icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
-        tooltip="Clear Terminal", on_click=clear_terminal, icon_size=18
+        tooltip="Clear Terminal", on_click=clear_terminal, icon_size=18, style=hover_style
     )
 
     terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=True)
@@ -97,7 +98,7 @@ def main(page: ft.Page):
 
     stats_clear_button = ft.IconButton(
         icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
-        tooltip="Clear Terminal", on_click=clear_stats_terminal, icon_size=18
+        tooltip="Clear Terminal", on_click=clear_stats_terminal, icon_size=18, style=hover_style
     )
 
     stats_status_text = ft.Text("System Ready", color=ft.Colors.BLUE_GREY_400)
@@ -153,8 +154,8 @@ def main(page: ft.Page):
             selected_output_path.value = "Selection cancelled"
         page.update()
 
-    pick_input_button = ft.Button("Select Data Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_input_picker)
-    pick_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_output_picker)
+    pick_input_button = ft.Button("Select Data Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_input_picker, style=hover_style)
+    pick_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_output_picker, style=hover_style)
 
     async def invoke_stats_input_picker(e):
         folder_path = await ft.FilePicker().get_directory_path(dialog_title="Select Filtered Data Folder")
@@ -174,8 +175,8 @@ def main(page: ft.Page):
             stats_selected_output_path.value = "Defaults to input folder"
         page.update()
 
-    pick_stats_input_button = ft.Button("Select Filtered Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_input_picker)
-    pick_stats_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_output_picker)
+    pick_stats_input_button = ft.Button("Select Filtered Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_input_picker, style=hover_style)
+    pick_stats_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_output_picker, style=hover_style)
 
     # ==========================================
     # 4. Logic to run your scripts 
@@ -335,7 +336,7 @@ def main(page: ft.Page):
             ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
             
             ft.Row(
-                [ft.Button("Run Data Filtering", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_filtering)],
+                [ft.Button("Run Data Filtering", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_filtering, style=hover_style)],
                 alignment=ft.MainAxisAlignment.CENTER, wrap=True 
             ),
             
@@ -368,7 +369,7 @@ def main(page: ft.Page):
             ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
 
             ft.Row(
-                [ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_descriptive_stat)],
+                [ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_descriptive_stat, style=hover_style)],
                 alignment=ft.MainAxisAlignment.CENTER, wrap=True 
             ),
             
@@ -425,6 +426,22 @@ def main(page: ft.Page):
             main_content_area.content = stats_view
         page.update()
 
+    def create_nav_destination(icon_name, selected_icon_name, label_text):
+        return ft.NavigationRailDestination(
+            icon=ft.GestureDetector(
+                mouse_cursor=ft.MouseCursor.CLICK, 
+                content=ft.Icon(icon_name)
+            ),
+            selected_icon=ft.GestureDetector(
+                mouse_cursor=ft.MouseCursor.CLICK, 
+                content=ft.Icon(selected_icon_name)
+            ),
+            label=ft.GestureDetector(
+                mouse_cursor=ft.MouseCursor.CLICK, 
+                content=ft.Text(label_text)
+            )
+        )
+
     sidebar = ft.NavigationRail(
         selected_index=0,
         label_type=ft.NavigationRailLabelType.ALL,
@@ -432,12 +449,12 @@ def main(page: ft.Page):
         min_extended_width=400,
         group_alignment=-0.9,
         destinations=[
-            ft.NavigationRailDestination(icon=ft.Icons.HELP_OUTLINE, selected_icon=ft.Icons.HELP, label="Tutorial"),
-            ft.NavigationRailDestination(icon=ft.Icons.FILTER_ALT_OUTLINED, selected_icon=ft.Icons.FILTER_ALT, label="Data Filtering"),
-            ft.NavigationRailDestination(icon=ft.Icons.BAR_CHART_OUTLINED, selected_icon=ft.Icons.BAR_CHART, label="Statistics"),
+            create_nav_destination(ft.Icons.HELP_OUTLINE, ft.Icons.HELP, "Tutorial"),
+            create_nav_destination(ft.Icons.FILTER_ALT_OUTLINED, ft.Icons.FILTER_ALT, "Data Filtering"),
+            create_nav_destination(ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART, "Statistics"),
         ],
         on_change=on_nav_change,
-        expand=True # <-- NEW: This forces the navigation rail to stretch down
+        expand=True
     )
 
     # --- NEW: We wrap the sidebar and the button in a single column ---
