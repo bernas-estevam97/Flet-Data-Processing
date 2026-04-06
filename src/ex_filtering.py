@@ -31,7 +31,7 @@ SUBTRACTION_MAP = {
 }
 
 # --- WORKER FUNCTION ---
-def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new):
+def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new, output_folder):
     index, file_path, total_files = file_info_tuple
     
     column_targets = CHOICE_MAP.get(choice)
@@ -119,7 +119,10 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             stats_output
         ], ignore_index=True)
 
-        output_file = os.path.splitext(file_path)[0] + '_filtered.xlsx'
+        # 🚀 NEW: Save to the designated output folder instead of the input folder
+        base_name = os.path.basename(file_path)
+        name_only = os.path.splitext(base_name)[0]
+        output_file = os.path.join(output_folder, f"{name_only}_filtered.xlsx")
         
         # 🚀 NEW: Write the sheet exactly once
         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
@@ -140,8 +143,15 @@ def main():
         experiment = sys.argv[4] if len(sys.argv) > 4 else "groundwalk"
         old_or_new = sys.argv[5] if len(sys.argv) > 5 else "old"
         
+        # 🚀 NEW: Check for a 6th argument. If it's missing or blank, default to folder_input
+        output_folder = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6].strip() else folder_input
+        
+        # Create it if it somehow doesn't exist
+        os.makedirs(output_folder, exist_ok=True)
+        
         print(f"🚀 Running via Flet UI in automated mode...")
-        print(f"📁 Target Folder: {folder_input}")
+        print(f"📁 Input Folder: {folder_input}")
+        print(f"📁 Output Folder: {output_folder}")
         print(f"⚙️  Settings: Cutoff({choice}) | Animal({animal_choice}) | {experiment} | {old_or_new} camera")
         
         if not os.path.isdir(folder_input):
@@ -154,6 +164,11 @@ def main():
             if os.path.isdir(folder_input):
                 break
             print("❌ Invalid folder path. Please try again.")
+            
+        # 🚀 NEW: Ask for output folder, default to input if blank
+        output_folder_input = input('Which folder for output? (Press Enter to use the input folder): ').strip()
+        output_folder = output_folder_input if output_folder_input else folder_input
+        os.makedirs(output_folder, exist_ok=True)
 
         def get_valid_input(prompt, valid_options, error_msg):
             while True:
@@ -202,9 +217,9 @@ def main():
 
     total_files = len(file_paths)
     indexed_files = [(i, f, total_files) for i, f in enumerate(file_paths)]
-    
-    # 🚀 NEW: Leave 1 core free to prevent UI lockups
-    num_processes = max(1, (os.cpu_count() or 4) - 1)
+
+    # 🚀 NEW: Leave 2 cores free to prevent UI lockups
+    num_processes = max(1, (os.cpu_count() or 4) - 2)
     
     print(f"\n⚙️  Processing {total_files} files using {num_processes} cores...")
     
@@ -212,7 +227,7 @@ def main():
     
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
         futures = [
-            executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new) 
+            executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder) 
             for item in indexed_files
         ]
         

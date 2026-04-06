@@ -4,11 +4,8 @@ import sys
 
 def main(page: ft.Page):
     # 1. App Configuration
-    page.title = "MR - Data processing"
-    
-    # --- NEW: Set to SYSTEM to respect user's default OS preference ---
+    page.title = "Data processing - MotoRater"
     page.theme_mode = ft.ThemeMode.SYSTEM 
-    
     page.window_width = 1000 
     page.window_height = 800 
     page.padding = 0
@@ -23,7 +20,7 @@ def main(page: ft.Page):
     output_folder = ft.TextField(label="Output Folder", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
 
     selected_input_path = ft.Text("No folder selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
-    selected_output_path = ft.Text("No folder selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
+    selected_output_path = ft.Text("Defaults to input folder", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
 
     cutoff_dropdown = ft.Dropdown(
         label="Cutoff Starts Where?", value="0",
@@ -67,7 +64,7 @@ def main(page: ft.Page):
     def clear_terminal(e):
         terminal_output.controls.clear()
         terminal_output.controls.append(ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True))
-        e.control.page.update()
+        page.update()
 
     clear_button = ft.IconButton(
         icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
@@ -94,7 +91,7 @@ def main(page: ft.Page):
     def clear_stats_terminal(e):
         stats_terminal_output.controls.clear()
         stats_terminal_output.controls.append(ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True))
-        e.control.page.update()
+        page.update()
 
     stats_clear_button = ft.IconButton(
         icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
@@ -134,15 +131,13 @@ def main(page: ft.Page):
     ])
 
     # ==========================================
-    # 3. Directory Picker Logic
+    # 3. Directory Picker Logic & Clear Buttons
     # ==========================================
     async def invoke_input_picker(e):
         folder_path = await ft.FilePicker().get_directory_path(dialog_title="Select Data Folder")
         if folder_path:
             selected_input_path.value = folder_path
             input_folder.value = folder_path
-        else:
-            selected_input_path.value = "Selection cancelled"
         page.update()
 
     async def invoke_output_picker(e):
@@ -150,8 +145,6 @@ def main(page: ft.Page):
         if folder_path:
             selected_output_path.value = folder_path
             output_folder.value = folder_path
-        else:
-            selected_output_path.value = "Selection cancelled"
         page.update()
 
     pick_input_button = ft.Button("Select Data Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_input_picker, style=hover_style)
@@ -162,8 +155,6 @@ def main(page: ft.Page):
         if folder_path:
             stats_selected_input_path.value = folder_path
             stats_input_folder.value = folder_path
-        else:
-            stats_selected_input_path.value = "Selection cancelled"
         page.update()
 
     async def invoke_stats_output_picker(e):
@@ -171,12 +162,23 @@ def main(page: ft.Page):
         if folder_path:
             stats_selected_output_path.value = folder_path
             stats_output_folder.value = folder_path
-        else:
-            stats_selected_output_path.value = "Defaults to input folder"
         page.update()
 
     pick_stats_input_button = ft.Button("Select Filtered Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_input_picker, style=hover_style)
     pick_stats_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_output_picker, style=hover_style)
+
+    # 🚀 NEW: Helper to clear folder inputs
+    def clear_folder_selection(text_field, text_label, default_msg):
+        text_field.value = ""
+        text_label.value = default_msg
+        page.update()
+
+    # 🚀 NEW: Clear Buttons
+    clear_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(input_folder, selected_input_path, "No folder selected"))
+    clear_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(output_folder, selected_output_path, "Defaults to input folder"))
+    clear_stats_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(stats_input_folder, stats_selected_input_path, "No folder selected"))
+    clear_stats_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(stats_output_folder, stats_selected_output_path, "Defaults to input folder"))
+
 
     # ==========================================
     # 4. Logic to run your scripts 
@@ -189,6 +191,7 @@ def main(page: ft.Page):
             page.update()
             return
 
+        out_path = output_folder.value if output_folder.value else ""
         choice = cutoff_dropdown.value
         animal = animal_dropdown.value
         experiment = experiment_dropdown.value
@@ -204,7 +207,7 @@ def main(page: ft.Page):
         try:
             command = [
                 sys.executable, "-u", "src/ex_filtering.py", 
-                data_path, choice, animal, experiment, camera
+                data_path, choice, animal, experiment, camera, out_path
             ]
             process = subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', text=True, bufsize=1
@@ -283,116 +286,137 @@ def main(page: ft.Page):
     # ==========================================
     # 5. DEFINE THE DIFFERENT VIEWS (PAGES)
     # ==========================================
-
+    
+    # 🚀 NEW: Wrapped the actual contents in a Container with padding_right=20 to fix scrollbar overlap
     tutorial_view = ft.Column(
         [
-            ft.Text("Welcome to MotoRater Data Processing", size=28, weight=ft.FontWeight.BOLD),
-            ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-            ft.Markdown(
-                """
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("Welcome to MotoRater Data Processing", size=28, weight=ft.FontWeight.BOLD),
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    ft.Markdown(
+                        """
 ## How to use this application:
 ---
-#### 1. Data Filtering
+#### 1. Data Filtering - MotoRater
 1. **Select Data Folder:** Click the folder icon to select the directory containing your raw `.xlsx` files.
 2. **Select Output Folder:** (Optional) Choose where the processed files will be saved.
 3. **Set Parameters:** Use the dropdowns to match the exact configuration of your experiment.
 4. **Run Script:** Press the button to begin filtering. Watch the Live Terminal for updates!
-
----
-
-#### 2. Descriptive Statistics
+""",extension_set=ft.MarkdownExtensionSet.GITHUB_WEB),
+                    ft.Markdown(""),
+                    ft.Markdown(""),
+                    ft.Markdown("---"),
+                    ft.Markdown(""),
+                    ft.Markdown("""
+#### 2. Descriptive Statistics - MotoRater
 1. **Select Filtered Data:** Choose the folder containing your previously filtered `.xlsx` files.
 2. **Select Output Folder:** (Optional) If left blank, it will save directly alongside your input files.
 3. **Select Experiment:** Choose the experiment type for the final file naming convention.
 4. **Run Script:** Press the button to generate your summary statistics block.
-                """,
-                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+                        """,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+                    )
+                ]),
+                padding=ft.Padding.only(right=20)
             )
         ],
         expand=True,
+        scroll=ft.ScrollMode.AUTO
     )
 
     filtering_view = ft.Column(
         [
-            ft.Text("Data Filtering Setup", size=28, weight=ft.FontWeight.BOLD),
-            ft.Divider(height=10, color=ft.Colors.TRANSPARENT), 
-            
-            ft.Row(
-                [
-                    ft.Column([ft.Row([pick_input_button, input_folder]), selected_input_path], expand=True),
-                    ft.Column([ft.Row([pick_output_button, output_folder]), selected_output_path], expand=True)
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.START 
-            ),
-            
-            ft.Divider(height=20),
-            ft.Text("Configuration Parameters", size=18, weight=ft.FontWeight.W_500),
-            ft.Row([cutoff_dropdown, animal_dropdown], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Row([experiment_dropdown, camera_dropdown], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            
-            ft.Divider(height=20),
-            terminal_section,
-            ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
-            
-            ft.Row(
-                [ft.Button("Run Data Filtering", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_filtering, style=hover_style)],
-                alignment=ft.MainAxisAlignment.CENTER, wrap=True 
-            ),
-            
-            ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-            status_text,
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("Data Filtering Setup", size=28, weight=ft.FontWeight.BOLD),
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT), 
+                    
+                    ft.Row(
+                        [
+                            # 🚀 NEW: Added the clear buttons directly into the row beside the TextFields
+                            ft.Column([ft.Row([pick_input_button, input_folder, clear_in_btn]), selected_input_path], expand=True),
+                            ft.Column([ft.Row([pick_output_button, output_folder, clear_out_btn]), selected_output_path], expand=True)
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.START 
+                    ),
+                    
+                    ft.Divider(height=20),
+                    ft.Text("Configuration Parameters", size=18, weight=ft.FontWeight.W_500),
+                    ft.Row([cutoff_dropdown, animal_dropdown], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([experiment_dropdown, camera_dropdown], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    
+                    ft.Divider(height=20),
+                    terminal_section,
+                    ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
+                    
+                    ft.Row(
+                        [ft.Button("Run Data Filtering", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_filtering, style=hover_style)],
+                        alignment=ft.MainAxisAlignment.CENTER, wrap=True 
+                    ),
+                    
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    status_text,
+                ]),
+                padding=ft.Padding.only(right=20)
+            )
         ],
         expand=True,
+        scroll=ft.ScrollMode.AUTO
     )
 
     stats_view = ft.Column(
         [
-            ft.Text("Descriptive Statistics", size=28, weight=ft.FontWeight.BOLD),
-            ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-            
-            ft.Row(
-                [
-                    ft.Column([ft.Row([pick_stats_input_button, stats_input_folder]), stats_selected_input_path], expand=True),
-                    ft.Column([ft.Row([pick_stats_output_button, stats_output_folder]), stats_selected_output_path], expand=True)
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.START 
-            ),
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("Descriptive Statistics", size=28, weight=ft.FontWeight.BOLD),
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    
+                    ft.Row(
+                        [
+                            # 🚀 NEW: Added clear buttons to the stats page as well
+                            ft.Column([ft.Row([pick_stats_input_button, stats_input_folder, clear_stats_in_btn]), stats_selected_input_path], expand=True),
+                            ft.Column([ft.Row([pick_stats_output_button, stats_output_folder, clear_stats_out_btn]), stats_selected_output_path], expand=True)
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.START 
+                    ),
 
-            ft.Divider(height=20),
-            ft.Text("Configuration Parameters", size=18, weight=ft.FontWeight.W_500),
-            ft.Row([stats_experiment_dropdown], alignment=ft.MainAxisAlignment.START),
-            
-            ft.Divider(height=20),
-            stats_terminal_section,
-            ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
+                    ft.Divider(height=20),
+                    ft.Text("Configuration Parameters", size=18, weight=ft.FontWeight.W_500),
+                    ft.Row([stats_experiment_dropdown], alignment=ft.MainAxisAlignment.START),
+                    
+                    ft.Divider(height=20),
+                    stats_terminal_section,
+                    ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
 
-            ft.Row(
-                [ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_descriptive_stat, style=hover_style)],
-                alignment=ft.MainAxisAlignment.CENTER, wrap=True 
-            ),
-            
-            ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-            stats_status_text,
+                    ft.Row(
+                        [ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_descriptive_stat, style=hover_style)],
+                        alignment=ft.MainAxisAlignment.CENTER, wrap=True 
+                    ),
+                    
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    stats_status_text,
+                ]),
+                padding=ft.Padding.only(right=20)
+            )
         ],
-        expand=True
+        expand=True,
+        scroll=ft.ScrollMode.AUTO
     )
 
     # ==========================================
     # 6. SIDEBAR & THEME TOGGLE LOGIC
     # ==========================================
     
-    # Check the actual system theme to set the initial toggle icon accurately
     is_system_dark = page.platform_brightness == ft.Brightness.DARK
 
     def toggle_theme(e):
-        # Resolve what the current effective theme is
         current_is_dark = page.theme_mode == ft.ThemeMode.DARK or (
             page.theme_mode == ft.ThemeMode.SYSTEM and page.platform_brightness == ft.Brightness.DARK
         )
         
-        # Swap it
         if current_is_dark:
             page.theme_mode = ft.ThemeMode.LIGHT
             theme_icon_button.icon = ft.Icons.DARK_MODE
@@ -407,7 +431,7 @@ def main(page: ft.Page):
     theme_icon_button = ft.IconButton(
         icon=ft.Icons.LIGHT_MODE if is_system_dark else ft.Icons.DARK_MODE,
         on_click=toggle_theme,
-        tooltip="Switch to Light Mode" if is_system_dark else "Switch to Dark Mode"
+        tooltip="Switch to Light Mode" if is_system_dark else "Switch to Dark Mode", style=hover_style
     )
 
     main_content_area = ft.Container(
@@ -457,17 +481,14 @@ def main(page: ft.Page):
         expand=True
     )
 
-    # --- NEW: We wrap the sidebar and the button in a single column ---
     sidebar_layout = ft.Column(
         [
             sidebar, 
-            # We add a little padding to the bottom so the button isn't hugging the window edge
             ft.Container(content=theme_icon_button, padding=ft.Padding.only(bottom=20)) 
         ],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER
     )
 
-    # Assemble the final page layout using our new sidebar_layout
     page.add(
         ft.Row(
             [
