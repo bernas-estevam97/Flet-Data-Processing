@@ -1,6 +1,7 @@
 import flet as ft
 import subprocess
 import sys
+import asyncio
 
 def main(page: ft.Page):
     # 1. App Configuration
@@ -71,7 +72,7 @@ def main(page: ft.Page):
         tooltip="Clear Terminal", on_click=clear_terminal, icon_size=18, style=hover_style
     )
 
-    terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=True)
+    terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=False)
     terminal_window = ft.Container(
         content=terminal_output, height=150, bgcolor=ft.Colors.BLACK_87,
         border_radius=5, padding=10, border=ft.Border.all(1, ft.Colors.WHITE_24)
@@ -116,7 +117,7 @@ def main(page: ft.Page):
         ], expand=True
     )
 
-    stats_terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=True)
+    stats_terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=False)
     stats_terminal_window = ft.Container(
         content=stats_terminal_output, height=150, bgcolor=ft.Colors.BLACK_87,
         border_radius=5, padding=10, border=ft.Border.all(1, ft.Colors.WHITE_24)
@@ -167,23 +168,29 @@ def main(page: ft.Page):
     pick_stats_input_button = ft.Button("Select Filtered Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_input_picker, style=hover_style)
     pick_stats_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_output_picker, style=hover_style)
 
-    # 🚀 NEW: Helper to clear folder inputs
     def clear_folder_selection(text_field, text_label, default_msg):
         text_field.value = ""
         text_label.value = default_msg
         page.update()
 
-    # 🚀 NEW: Clear Buttons
+    # Buttons logic and styling
     clear_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(input_folder, selected_input_path, "No folder selected"))
     clear_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(output_folder, selected_output_path, "Defaults to input folder"))
     clear_stats_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(stats_input_folder, stats_selected_input_path, "No folder selected"))
     clear_stats_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear Folder", on_click=lambda e: clear_folder_selection(stats_output_folder, stats_selected_output_path, "Defaults to input folder"))
+    
+    # 🚀 NEW: Defined both Run buttons and Progress Bars up here so they can be referenced inside the functions
+    run_filter_btn = ft.Button("Run Data Filtering", icon=ft.Icons.PLAY_ARROW, style=hover_style)
+    filter_progress = ft.ProgressBar(visible=False, color=ft.Colors.AMBER_400)
+
+    run_stats_btn = ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, style=hover_style)
+    stats_progress = ft.ProgressBar(visible=False, color=ft.Colors.AMBER_400)
 
 
     # ==========================================
-    # 4. Logic to run your scripts 
+    # 4. Logic to run scripts 
     # ==========================================
-    def run_script_excel_filtering(e):
+    async def run_script_excel_filtering(e):
         data_path = input_folder.value
         if not data_path:
             status_text.value = "Please select a data folder first!"
@@ -202,6 +209,9 @@ def main(page: ft.Page):
         
         terminal_output.controls.clear()
         terminal_output.controls.append(ft.Text("Starting filtering script...", color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True))
+        
+        run_filter_btn.disabled = True
+        filter_progress.visible = True
         page.update()
 
         try:
@@ -209,21 +219,57 @@ def main(page: ft.Page):
                 sys.executable, "-u", "src/ex_filtering.py", 
                 data_path, choice, animal, experiment, camera, out_path
             ]
-            process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', text=True, bufsize=1
+            
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
             )
-            for line in iter(process.stdout.readline, ''):
-                if line:
-                    terminal_output.controls.append(
-                        ft.Text(line.strip(), color=ft.Colors.GREEN_400, font_family="Consolas",selectable=True, size=12)
-                    )
+
+            line_count = 0
+            MAX_LINES = 500  
+            BATCH_SIZE = 10  
+            
+            while True:
+                line = await process.stdout.readline()
+                if not line:
                     page.update() 
-            process.stdout.close()
-            process.wait()
+                    if line_count > 0:
+                        # 🚀 FIXED: Added 'await' to prevent tracemalloc error
+                        await terminal_output.scroll_to(offset=-1, duration=50)
+                    break 
+                
+                decoded_line = line.decode('utf-8', errors='replace').strip()
+                
+                if decoded_line:
+                    line_count += 1
+                    
+                    # 🚀 NEW: Dynamic color logic for standard outputs, errors, and warnings
+                    line_color = ft.Colors.GREEN_400
+                    if "[ERROR]" in decoded_line or "Traceback" in decoded_line or "Exception" in decoded_line:
+                        line_color = ft.Colors.RED_400
+                    elif "[WARNING]" in decoded_line:
+                        line_color = ft.Colors.AMBER_400
+                    
+                    terminal_output.controls.append(
+                        ft.Text(decoded_line, color=line_color, font_family="Consolas", selectable=True, size=12)
+                    )
+                    
+                    if len(terminal_output.controls) > MAX_LINES:
+                        del terminal_output.controls[0]
+                    
+                    if line_count % BATCH_SIZE == 0:
+                        page.update() 
+                        # 🚀 FIXED: Added 'await' here as well
+                        await terminal_output.scroll_to(offset=-1, duration=50) 
+
+            await process.wait()
 
             if process.returncode == 0:
                 status_text.value = "Filtering script executed successfully!"
                 status_text.color = ft.Colors.GREEN_400
+                page.snack_bar = ft.SnackBar(content=ft.Text("✅ Data filtering completed successfully!"), bgcolor=ft.Colors.GREEN_800)
+                page.snack_bar.open = True
             else:
                 status_text.value = f"Script failed with exit code {process.returncode}"
                 status_text.color = ft.Colors.RED_400
@@ -233,9 +279,12 @@ def main(page: ft.Page):
             status_text.color = ft.Colors.RED_400
             terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="Consolas", selectable=True))
             
-        page.update()
+        finally:
+            run_filter_btn.disabled = False
+            filter_progress.visible = False
+            page.update()
 
-    def run_script_excel_descriptive_stat(e):
+    async def run_script_excel_descriptive_stat(e):
         data_path = stats_input_folder.value
         if not data_path:
             stats_status_text.value = "Please select a filtered data folder first!"
@@ -250,6 +299,9 @@ def main(page: ft.Page):
         stats_status_text.color = ft.Colors.AMBER_400
         stats_terminal_output.controls.clear()
         stats_terminal_output.controls.append(ft.Text("Starting descriptive statistics script...", color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True))
+        
+        run_stats_btn.disabled = True
+        stats_progress.visible = True
         page.update()
 
         try:
@@ -257,21 +309,57 @@ def main(page: ft.Page):
                 sys.executable, "-u", "src/desc_analysis.py", 
                 data_path, out_path, experiment
             ]
-            process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', text=True, bufsize=1
+            
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
             )
-            for line in iter(process.stdout.readline, ''):
-                if line:
-                    stats_terminal_output.controls.append(
-                        ft.Text(line.strip(), color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True, size=12)
-                    )
+
+            line_count = 0
+            MAX_LINES = 500  
+            BATCH_SIZE = 10  
+            
+            while True:
+                line = await process.stdout.readline()
+                if not line:
                     page.update() 
-            process.stdout.close()
-            process.wait()
+                    if line_count > 0:
+                        # 🚀 FIXED: Added 'await'
+                        await stats_terminal_output.scroll_to(offset=-1, duration=50)
+                    break 
+                
+                decoded_line = line.decode('utf-8', errors='replace').strip()
+                
+                if decoded_line:
+                    line_count += 1
+                    
+                    # 🚀 NEW: Dynamic color logic
+                    line_color = ft.Colors.GREEN_400
+                    if "[ERROR]" in decoded_line or "Traceback" in decoded_line or "Exception" in decoded_line:
+                        line_color = ft.Colors.RED_400
+                    elif "[WARNING]" in decoded_line:
+                        line_color = ft.Colors.AMBER_400
+                    
+                    stats_terminal_output.controls.append(
+                        ft.Text(decoded_line, color=line_color, font_family="Consolas", selectable=True, size=12)
+                    )
+                    
+                    if len(stats_terminal_output.controls) > MAX_LINES:
+                        del stats_terminal_output.controls[0]
+                    
+                    if line_count % BATCH_SIZE == 0:
+                        page.update() 
+                        # 🚀 FIXED: Added 'await'
+                        await stats_terminal_output.scroll_to(offset=-1, duration=50) 
+        
+            await process.wait()
 
             if process.returncode == 0:
                 stats_status_text.value = "Statistics generated successfully!"
                 stats_status_text.color = ft.Colors.GREEN_400
+                page.snack_bar = ft.SnackBar(content=ft.Text("✅ Descriptive statistics completed successfully!"), bgcolor=ft.Colors.GREEN_800)
+                page.snack_bar.open = True
             else:
                 stats_status_text.value = f"Script failed with exit code {process.returncode}"
                 stats_status_text.color = ft.Colors.RED_400
@@ -281,44 +369,124 @@ def main(page: ft.Page):
             stats_status_text.color = ft.Colors.RED_400
             stats_terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="Consolas", selectable=True))
             
-        page.update()
+        finally:
+            run_stats_btn.disabled = False
+            stats_progress.visible = False
+            page.update()
+
+    # 🚀 NEW: Attach the actual on_click actions to our pre-defined buttons now that the functions are created
+    run_filter_btn.on_click = run_script_excel_filtering
+    run_stats_btn.on_click = run_script_excel_descriptive_stat
 
     # ==========================================
     # 5. DEFINE THE DIFFERENT VIEWS (PAGES)
     # ==========================================
     
-    # 🚀 NEW: Wrapped the actual contents in a Container with padding_right=20 to fix scrollbar overlap
     tutorial_view = ft.Column(
         [
             ft.Container(
                 content=ft.Column([
-                    ft.Text("Welcome to MotoRater Data Processing", size=28, weight=ft.FontWeight.BOLD),
+                    # Header Section
+                    ft.Row([
+                        ft.Icon(ft.Icons.ANALYTICS, size=40, color=ft.Colors.BLUE_400),
+                        ft.Text("MotoRater Data Pipeline", size=32, weight=ft.FontWeight.BOLD),
+                    ], alignment=ft.MainAxisAlignment.START),
+                    
+                    ft.Text(
+                        "Welcome to the MotoRater automated data processing suite. This tool is designed to take your raw experimental data, apply rigorous filtering criteria, and generate clean, descriptive statistics.", 
+                        color=ft.Colors.WHITE_70, size=16
+                    ),
+                    ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
+
+                    # Step 1: Filtering Card
+                    ft.Card(
+                        content=ft.Container(
+                            padding=20,
+                            content=ft.Column([
+                                ft.ListTile(
+                                    leading=ft.Icon(ft.Icons.FILTER_ALT, size=30, color=ft.Colors.CYAN_400),
+                                    title=ft.Text("Step 1: Data Filtering", weight=ft.FontWeight.BOLD, size=20),
+                                    subtitle=ft.Text("Process raw .xlsx files in bulk using parallel processing.")
+                                ),
+                                ft.Divider(),
+                                ft.Markdown(
+                                    """
+* **Select Data Folder:** Choose the directory containing your raw `.xlsx` files.
+* **Select Output Folder (Optional):** Define where the cleaned files will be saved. If left blank, it defaults to your input folder.
+* **Set Parameters:** Carefully select your Cutoff, Animal Species, Experiment Type, and Camera Settings to match your lab setup.
+* **Run:** Click **Run Data Filtering**. The system will process files simultaneously for maximum speed.
+                                    """, 
+                                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+                                )
+                            ])
+                        ),
+                        elevation=2,
+                    ),
+
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                    ft.Markdown(
-                        """
-## How to use this application:
----
-#### 1. Data Filtering - MotoRater
-1. **Select Data Folder:** Click the folder icon to select the directory containing your raw `.xlsx` files.
-2. **Select Output Folder:** (Optional) Choose where the processed files will be saved.
-3. **Set Parameters:** Use the dropdowns to match the exact configuration of your experiment.
-4. **Run Script:** Press the button to begin filtering. Watch the Live Terminal for updates!
-""",extension_set=ft.MarkdownExtensionSet.GITHUB_WEB),
-                    ft.Markdown(""),
-                    ft.Markdown(""),
-                    ft.Markdown("---"),
-                    ft.Markdown(""),
-                    ft.Markdown("""
-#### 2. Descriptive Statistics - MotoRater
-1. **Select Filtered Data:** Choose the folder containing your previously filtered `.xlsx` files.
-2. **Select Output Folder:** (Optional) If left blank, it will save directly alongside your input files.
-3. **Select Experiment:** Choose the experiment type for the final file naming convention.
-4. **Run Script:** Press the button to generate your summary statistics block.
-                        """,
-                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
-                    )
+
+                    # Step 2: Statistics Card
+                    ft.Card(
+                        content=ft.Container(
+                            padding=20,
+                            content=ft.Column([
+                                ft.ListTile(
+                                    leading=ft.Icon(ft.Icons.BAR_CHART, size=30, color=ft.Colors.PURPLE_400),
+                                    title=ft.Text("Step 2: Descriptive Statistics", weight=ft.FontWeight.BOLD, size=20),
+                                    subtitle=ft.Text("Generate summary statistics from your filtered datasets.")
+                                ),
+                                ft.Divider(),
+                                ft.Markdown(
+                                    """
+* **Select Filtered Data Folder:** Choose the directory containing the `.xlsx` files you just processed in Step 1.
+* **Select Output Folder (Optional):** Choose a destination for your final statistics blocks.
+* **Select Experiment:** Ensure the experiment type matches your dataset for proper file naming.
+* **Run:** Click **Run Descriptive Statistics** to compile the final analysis.
+                                    """, 
+                                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+                                )
+                            ])
+                        ),
+                        elevation=2,
+                    ),
+
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+
+                    # Terminal Legend Card
+                    ft.Card(
+                        content=ft.Container(
+                            padding=20,
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            border_radius=10,
+                            content=ft.Column([
+                                ft.ListTile(
+                                    leading=ft.Icon(ft.Icons.TERMINAL, size=30, color=ft.Colors.GREEN_400),
+                                    title=ft.Text("Understanding the Live Terminal", weight=ft.FontWeight.BOLD, size=20),
+                                ),
+                                ft.Divider(),
+                                ft.Row([
+                                    ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_400, size=16),
+                                    ft.Text("Green text:", weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+                                    ft.Text("File processed successfully.")
+                                ]),
+                                ft.Row([
+                                    ft.Icon(ft.Icons.WARNING, color=ft.Colors.AMBER_400, size=16),
+                                    ft.Text("Amber text:", weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400),
+                                    ft.Text("Warning or non-critical notification.")
+                                ]),
+                                ft.Row([
+                                    ft.Icon(ft.Icons.ERROR, color=ft.Colors.RED_400, size=16),
+                                    ft.Text("Red text:", weight=ft.FontWeight.BOLD, color=ft.Colors.RED_400),
+                                    ft.Text("Error processing a file. Check the output for details.")
+                                ]),
+                            ])
+                        ),
+                        elevation=2,
+                        
+                    ),
+                    ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
                 ]),
-                padding=ft.Padding.only(right=20)
+                padding=ft.Padding.only(right=20, top=10, bottom=20)
             )
         ],
         expand=True,
@@ -334,7 +502,6 @@ def main(page: ft.Page):
                     
                     ft.Row(
                         [
-                            # 🚀 NEW: Added the clear buttons directly into the row beside the TextFields
                             ft.Column([ft.Row([pick_input_button, input_folder, clear_in_btn]), selected_input_path], expand=True),
                             ft.Column([ft.Row([pick_output_button, output_folder, clear_out_btn]), selected_output_path], expand=True)
                         ],
@@ -351,10 +518,9 @@ def main(page: ft.Page):
                     terminal_section,
                     ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
                     
-                    ft.Row(
-                        [ft.Button("Run Data Filtering", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_filtering, style=hover_style)],
-                        alignment=ft.MainAxisAlignment.CENTER, wrap=True 
-                    ),
+                    # 🚀 NEW: Added the progress bar right under the run button
+                    ft.Row([run_filter_btn], alignment=ft.MainAxisAlignment.CENTER, wrap=True),
+                    ft.Row([filter_progress], alignment=ft.MainAxisAlignment.CENTER),
                     
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                     status_text,
@@ -375,7 +541,6 @@ def main(page: ft.Page):
                     
                     ft.Row(
                         [
-                            # 🚀 NEW: Added clear buttons to the stats page as well
                             ft.Column([ft.Row([pick_stats_input_button, stats_input_folder, clear_stats_in_btn]), stats_selected_input_path], expand=True),
                             ft.Column([ft.Row([pick_stats_output_button, stats_output_folder, clear_stats_out_btn]), stats_selected_output_path], expand=True)
                         ],
@@ -391,10 +556,9 @@ def main(page: ft.Page):
                     stats_terminal_section,
                     ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
 
-                    ft.Row(
-                        [ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, on_click=run_script_excel_descriptive_stat, style=hover_style)],
-                        alignment=ft.MainAxisAlignment.CENTER, wrap=True 
-                    ),
+                    # 🚀 NEW: Added the progress bar right under the run button
+                    ft.Row([run_stats_btn], alignment=ft.MainAxisAlignment.CENTER, wrap=True),
+                    ft.Row([stats_progress], alignment=ft.MainAxisAlignment.CENTER),
                     
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                     stats_status_text,

@@ -74,6 +74,15 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
 
         # --- 3. Apply Subtraction & Inversion ---
         target_indices = [5, 6, 9, 11, 13, 17]
+
+        # --- NEW DYNAMIC INDEX LOGIC ---
+        # Check Nose Height (index 15) and Tail Tip Height (index 16)
+        if df_kin_filtered.iloc[:, 15].mean() > 0.3:
+            target_indices.append(15)
+        if df_kin_filtered.iloc[:, 16].mean() > 0.3:
+            target_indices.append(16)
+        # -------------------------------
+
         current_combo = (animal_choice, experiment, old_or_new)
         value_to_subtract = SUBTRACTION_MAP.get(current_combo)
 
@@ -132,7 +141,8 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
         return f"Processed file {index + 1} of {total_files}: {os.path.basename(file_path)}"
 
     except Exception as e:
-        return f"[ERROR] File '{os.path.basename(file_path)}': {e}"
+        print(f"[ERROR] File '{os.path.basename(file_path)}': {e}") # This sends it to the UI!
+        return f"[ERROR] File '{os.path.basename(file_path)}': {e}" # This keeps your internal logic working
 
 # --- MAIN EXECUTION ---
 def main():
