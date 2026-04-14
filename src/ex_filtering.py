@@ -18,16 +18,31 @@ CHOICE_MAP = {
 }
 
 SUBTRACTION_MAP = {
-    ("0", "groundwalk", "old"): 0.515,
-    ("1", "groundwalk", "old"): 0.505,
-    ("0", "groundwalk", "new"): 0.491,
+    ("0", "groundwalk", "old"): 0.524,
+    ("1", "groundwalk", "old"): 0.524,
+    ("0", "groundwalk", "new"): 0.502,
     ("0", "beamwalk", "old"): 0.44,
-    ("1", "beamwalk", "old"): 0.438,
-    ("0", "beamwalk", "new"): 0.426,
-    ("0", "gridwalk", "old"): 0.495,
-    ("0", "gridwalk", "new"): 0.473,
-    ("1", "gridwalk", "old"): 0.483,
-    ("0", "swimming", "old"): 0.452
+    ("1", "beamwalk", "old"): 0.444,
+    ("0", "beamwalk", "new"): 0.43,
+    ("0", "gridwalk", "old"): 0.507,
+    ("0", "gridwalk", "new"): 0.486,
+    ("1", "gridwalk", "old"): 0.504,
+    ("0", "swimming", "old"): 0.566, #value takes offset into account
+    ("0", "swimming", "new"): 0.568, #value takes offset into account
+}
+
+OFFSET_MAP = {
+    ("0", "groundwalk", "old"): 0,
+    ("1", "groundwalk", "old"): 0,
+    ("0", "groundwalk", "new"): 0,
+    ("0", "beamwalk", "old"): 0,
+    ("1", "beamwalk", "old"): 0,
+    ("0", "beamwalk", "new"): 0,
+    ("0", "gridwalk", "old"): 0,
+    ("0", "gridwalk", "new"): 0,
+    ("1", "gridwalk", "old"): 0,
+    ("0", "swimming", "old"): 0.029,
+    ("0", "swimming", "new"): 0.036,
 }
 
 # --- WORKER FUNCTION ---
@@ -83,8 +98,14 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             target_indices.append(16)
         # -------------------------------
 
+        target_indices_offset = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+
         current_combo = (animal_choice, experiment, old_or_new)
         value_to_subtract = SUBTRACTION_MAP.get(current_combo)
+        value_to_subtract_offset = OFFSET_MAP.get(current_combo)
+
+        if value_to_subtract_offset is not None:
+                df_kin_filtered.iloc[:, target_indices_offset] -= value_to_subtract_offset
 
         if value_to_subtract is not None:
             df_kin_filtered.iloc[:, target_indices] = value_to_subtract - df_kin_filtered.iloc[:, target_indices]
