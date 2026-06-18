@@ -3,6 +3,7 @@ import subprocess
 import sys
 import asyncio
 import os
+import json
 
 def main(page: ft.Page):
     # 1. App Configuration
@@ -130,7 +131,133 @@ def main(page: ft.Page):
     ])
 
     # ==========================================
-    # 🚀 NEW: UI Components Setup (Merge Page)
+    # UI Components Setup (Statistics AIO Page)
+    # ==========================================
+    def clear_stats_terminal(e):
+        stats_terminal_aio_output.controls.clear()
+        stats_terminal_aio_output.controls.append(ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True))
+        page.update()
+
+    stats_clear_aio_button = ft.IconButton(
+        icon=ft.icons.Icons.DELETE, icon_color=ft.Colors.WHITE_54,
+        tooltip="Clear Terminal", on_click=clear_stats_terminal, icon_size=18, style=hover_style
+    )
+
+    stats_aio_status_text = ft.Text("System Ready", color=ft.Colors.BLUE_GREY_400)
+
+    stats_input_aio_folder = ft.TextField(label="Filtered Data Folder", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
+    stats_output_aio_folder = ft.TextField(label="Output Folder (Optional)", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
+
+    stats_selected_input_aio_path = ft.Text("No folder selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
+    stats_selected_output_aio_path = ft.Text("Defaults to input folder", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
+
+    # ==========================================
+    # NEW: Dynamic File Tagging Logic & UI
+    # ==========================================
+    
+    # 1. State Dictionary to hold mappings for your backend script
+    # e.g., {"F": "Female", "12W": "Timepoint 4"}
+    active_file_tags = {} 
+    
+    # 2. UI Container to display the added tags visually
+    tags_list_column = ft.Column(spacing=5) 
+    
+    # NEW: Define the container here and set visible=False initially
+    tags_list_container = ft.Container(
+        content=tags_list_column,
+        padding=10,
+        bgcolor=ft.Colors.BLACK_12,
+        border_radius=5,
+        border=ft.Border.all(1, ft.Colors.WHITE_24),
+        visible=False # Starts hidden so you don't get the empty box
+    )
+
+    # 3. Input fields
+    tag_code_input = ft.TextField(label="File Tag (e.g., F)", width=150, border_color=ft.Colors.WHITE_70)
+    tag_meaning_input = ft.TextField(label="Meaning (e.g., Female)", width=300, border_color=ft.Colors.WHITE_70)
+
+    # 4. Remove Tag Handler
+    def remove_tag(e, code, row_control):
+        if code in active_file_tags:
+            del active_file_tags[code]
+        tags_list_column.controls.remove(row_control)
+        
+        # NEW: If the list is empty after removing, hide the container again
+        if len(tags_list_column.controls) == 0:
+            tags_list_container.visible = False
+            
+        page.update()
+
+    # 5. Add Tag Handler
+    async def add_tag(e):
+        code = tag_code_input.value.strip()
+        meaning = tag_meaning_input.value.strip()
+
+        if not code or not meaning:
+            return
+        if code in active_file_tags:
+            return 
+
+        active_file_tags[code] = meaning
+
+        tag_row = ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                ft.Text(f"Tag: [{code}]  ➔  Meaning: [{meaning}]", color=ft.Colors.CYAN_200, weight=ft.FontWeight.W_500),
+            ]
+        )
+        
+        delete_btn = ft.IconButton(
+            icon=ft.icons.Icons.REMOVE_CIRCLE_OUTLINE,
+            icon_color=ft.Colors.RED_400,
+            tooltip="Remove Tag",
+            on_click=lambda e, c=code, r=tag_row: remove_tag(e, c, r),
+            style=hover_style
+        )
+        tag_row.controls.append(delete_btn)
+
+        tags_list_column.controls.append(tag_row)
+        
+        # NEW: Ensure the container is visible once a tag is added
+        tags_list_container.visible = True
+        
+        tag_code_input.value = ""
+        tag_meaning_input.value = ""
+        page.update()
+
+        await tag_code_input.focus()
+
+    add_tag_btn = ft.Button("Add", on_click=add_tag, icon=ft.icons.Icons.ADD, style=hover_style)
+
+    # 6. Group the Tagging Section into a single component
+    stats_tagging_section = ft.Column([
+        ft.Text("Data Parsing Tags", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
+        ft.Text("Define the filename abbreviations and their actual meanings for the processor.", size=12, color=ft.Colors.WHITE_54),
+        ft.Row(
+            [tag_code_input, tag_meaning_input, add_tag_btn], 
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True
+        ),
+        # NEW: Just drop the container variable here
+        tags_list_container 
+    ])
+
+    stats_terminal_aio_output = ft.ListView(expand=True, spacing=2, auto_scroll=False)
+    stats_terminal_aio_window = ft.Container(
+        content=stats_terminal_aio_output, height=150, bgcolor=ft.Colors.BLACK_87,
+        border_radius=5, padding=10, border=ft.Border.all(1, ft.Colors.WHITE_24)
+    )
+
+    stats_terminal_aio_section = ft.Column([
+        ft.Row([
+            ft.Text("Live Terminal Output", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE_70),
+            stats_clear_aio_button
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        stats_terminal_aio_window
+    ])
+
+    # ==========================================
+    # UI Components Setup (Merge Page)
     # ==========================================
     def clear_merge_terminal(e):
         merge_terminal_output.controls.clear()
@@ -144,13 +271,13 @@ def main(page: ft.Page):
 
     merge_status_text = ft.Text("System Ready", color=ft.Colors.BLUE_GREY_400)
 
-    merge_file1_input = ft.TextField(label="First Excel File", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
-    merge_file2_input = ft.TextField(label="Second Excel File", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
+    # merge_file1_input = ft.TextField(label="First Excel File", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
+    # merge_file2_input = ft.TextField(label="Second Excel File", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
     merge_output_folder = ft.TextField(label="Output Folder", border_color=ft.Colors.WHITE_70, read_only=True, expand=True)
     merge_output_filename = ft.TextField(label="Output File Name (e.g., merged_data.xlsx)", border_color=ft.Colors.WHITE_70, expand=True)
 
-    merge_selected_file1_path = ft.Text("No file selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
-    merge_selected_file2_path = ft.Text("No file selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
+    # merge_selected_file1_path = ft.Text("No file selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
+    # merge_selected_file2_path = ft.Text("No file selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
     merge_selected_output_path = ft.Text("No folder selected", color=ft.Colors.CYAN_300, italic=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1)
 
     merge_terminal_output = ft.ListView(expand=True, spacing=2, auto_scroll=False)
@@ -207,23 +334,59 @@ def main(page: ft.Page):
     pick_stats_input_button = ft.Button("Select Filtered Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_input_picker, style=hover_style)
     pick_stats_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_output_picker, style=hover_style)
 
+
+    # Stats Pickers - AIO
+    async def invoke_stats_aio_input_picker(e):
+        folder_path = await ft.FilePicker().get_directory_path(dialog_title="Select Filtered Data Folder")
+        if folder_path:
+            stats_selected_input_aio_path.value = folder_path
+            stats_input_aio_folder.value = folder_path
+        page.update()
+
+    async def invoke_stats_aio_output_picker(e):
+        folder_path = await ft.FilePicker().get_directory_path(dialog_title="Select Output Folder")
+        if folder_path:
+            stats_selected_output_aio_path.value = folder_path
+            stats_output_folder.value = folder_path
+        page.update()
+
+    pick_stats_aio_input_button = ft.Button("Select Filtered Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_aio_input_picker, style=hover_style)
+    pick_stats_aio_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_stats_aio_output_picker, style=hover_style)
+
     # ==========================================
     # 🚀 NEW: Merge Pickers (Modern Awaitable Flet API)
     # ==========================================
     
-    async def invoke_file1_picker(e):
-        files = await ft.FilePicker().pick_files(allowed_extensions=["xlsx"])
-        if files:
-            merge_file1_input.value = files[0].path
-            merge_selected_file1_path.value = files[0].path
-            page.update()
+    # Create a list to store the actual file paths in memory
+    selected_merge_files = []
 
-    async def invoke_file2_picker(e):
-        files = await ft.FilePicker().pick_files(allowed_extensions=["xlsx"])
+    # Create a UI Column to display the names of the selected files
+    merge_selected_files_list = ft.Column(spacing=5)
+
+    async def on_merge_files_picked(e):
+    # 🚀 NEW: Await the file picker directly inside the click event!
+        files = await ft.FilePicker().pick_files(
+            allow_multiple=True, 
+            allowed_extensions=["xlsx", "xls"]
+        )
+        
+        selected_merge_files.clear()
+        merge_selected_files_list.controls.clear()
+        
+        # If the user selected files (and didn't just hit 'Cancel')
         if files:
-            merge_file2_input.value = files[0].path
-            merge_selected_file2_path.value = files[0].path
-            page.update()
+            for f in files:
+                selected_merge_files.append(f.path)
+                # Add a visual indicator for each file
+                merge_selected_files_list.controls.append(
+                    ft.Row([
+                        ft.Icon(ft.Icons.INSERT_DRIVE_FILE, size=16, color=ft.Colors.BLUE_400),
+                        ft.Text(f.name, size=14)
+                    ])
+                )
+                
+        e.page.update()
+    
 
     async def invoke_merge_out_picker(e):
         folder_path = await ft.FilePicker().get_directory_path(dialog_title="Select Output Folder")
@@ -233,8 +396,8 @@ def main(page: ft.Page):
             page.update()
 
     # Buttons hooked directly to the async functions
-    pick_file1_button = ft.Button("Select 1st File", icon=ft.Icons.FILE_OPEN, on_click=invoke_file1_picker, style=hover_style)
-    pick_file2_button = ft.Button("Select 2nd File", icon=ft.Icons.FILE_OPEN, on_click=invoke_file2_picker, style=hover_style)
+    #merge_file_picker = ft.Button("Select Files", icon=ft.Icons.FILE_OPEN, on_click=on_merge_files_picked, style=hover_style)
+    
     pick_merge_output_button = ft.Button("Select Output Folder", icon=ft.Icons.FOLDER_OPEN, on_click=invoke_merge_out_picker, style=hover_style)
 
     def clear_folder_selection(text_field, text_label, default_msg):
@@ -242,15 +405,38 @@ def main(page: ft.Page):
         text_label.value = default_msg
         page.update()
 
+    def clear_merge_files(e):
+        # print("Clear button clicked! Wiping files...") # Debugging check
+        
+        # 1. Clear the underlying data
+        selected_merge_files.clear()
+        
+        # 2. Clear the visual UI column
+        merge_selected_files_list.controls.clear()
+        
+        # 3. Add the placeholder text
+        merge_selected_files_list.controls.append(
+            ft.Text("No files selected", color=ft.Colors.WHITE_54, italic=True)
+        )
+        
+        # 4. FORCE UPDATE the specific UI element (More reliable than page.update)
+        merge_selected_files_list.update()
+
     # Clear Buttons logic and styling
     clear_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(input_folder, selected_input_path, "No folder selected"))
     clear_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(output_folder, selected_output_path, "Defaults to input folder"))
     clear_stats_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(stats_input_folder, stats_selected_input_path, "No folder selected"))
     clear_stats_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(stats_output_folder, stats_selected_output_path, "Defaults to input folder"))
-    
+    clear_stats_aio_in_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(stats_input_aio_folder, stats_selected_input_aio_path, "No folder selected"))
+    clear_stats_aio_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(stats_output_aio_folder, stats_selected_output_aio_path, "Defaults to input folder"))
+
     # Merge clear buttons
-    clear_file1_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(merge_file1_input, merge_selected_file1_path, "No file selected"))
-    clear_file2_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(merge_file2_input, merge_selected_file2_path, "No file selected"))
+    clear_merge_files_btn = ft.IconButton(
+        icon=ft.Icons.CLOSE, 
+        style=hover_style, 
+        tooltip="Clear Selection", 
+        on_click=clear_merge_files  # <-- Perfect Flet syntax
+    )
     clear_merge_out_btn = ft.IconButton(icon=ft.Icons.CLOSE, style=hover_style, tooltip="Clear", on_click=lambda e: clear_folder_selection(merge_output_folder, merge_selected_output_path, "No folder selected"))
 
     # Run Buttons & Progress Bars
@@ -259,6 +445,9 @@ def main(page: ft.Page):
 
     run_stats_btn = ft.Button("Run Descriptive Statistics", icon=ft.Icons.PLAY_ARROW, style=hover_style)
     stats_progress = ft.ProgressBar(visible=False, color=ft.Colors.AMBER_400)
+
+    run_stats_aio_btn = ft.Button("Run Descriptive Statistics - AIO", icon=ft.Icons.PLAY_ARROW, style=hover_style)
+    stats_aio_progress = ft.ProgressBar(visible=False, color=ft.Colors.AMBER_400)
 
     run_merge_btn = ft.Button("Run File Merge", icon=ft.Icons.PLAY_ARROW, style=hover_style)
     merge_progress = ft.ProgressBar(visible=False, color=ft.Colors.AMBER_400)
@@ -446,14 +635,103 @@ def main(page: ft.Page):
             stats_progress.visible = False
             page.update()
 
-    # 🚀 NEW: Merge Script Logic
-    async def run_script_merge_files(e):
-        f1 = merge_file1_input.value
-        f2 = merge_file2_input.value
-        out_folder = merge_output_folder.value
-        out_name = merge_output_filename.value
+    # Descriptive analysis All In One - Different logic for extracting duration value and additional metadata
+    async def run_script_excel_descriptive_stat_aio(e):
+        data_path = stats_input_folder.value
+        if not data_path:
+            stats_aio_status_text.value = "Please select a filtered data folder first!"
+            stats_aio_status_text.color = ft.Colors.RED_400
+            page.update()
+            return
 
-        if not f1 or not f2 or not out_folder or not out_name:
+        out_path = stats_output_aio_folder.value if stats_output_aio_folder.value else ""
+        tags_json_string = json.dumps(active_file_tags)
+
+        stats_aio_status_text.value = "Generating statistics..."
+        stats_aio_status_text.color = ft.Colors.AMBER_400
+        stats_terminal_output.controls.clear()
+        stats_terminal_output.controls.append(ft.Text("Starting descriptive statistics AIO script...", color=ft.Colors.GREEN_400, font_family="Consolas", selectable=True))
+        
+        run_stats_btn.disabled = True
+        stats_progress.visible = True
+        page.update()
+
+        try:
+            command = [
+                sys.executable, "-u", "src/desc_analysis_aio.py", 
+                data_path, out_path, "Tagged_Experiment", tags_json_string
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT
+            )
+
+            line_count = 0
+            MAX_LINES = 500  
+            BATCH_SIZE = 10  
+            
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    page.update() 
+                    if line_count > 0:
+                        await stats_terminal_output.scroll_to(offset=-1, duration=50)
+                    break 
+                
+                decoded_line = line.decode('utf-8', errors='replace').strip()
+                
+                if decoded_line:
+                    line_count += 1
+                    line_color = ft.Colors.GREEN_400
+                    if "[ERROR]" in decoded_line or "Traceback" in decoded_line or "Exception" in decoded_line:
+                        line_color = ft.Colors.RED_400
+                    elif "[WARNING]" in decoded_line:
+                        line_color = ft.Colors.AMBER_400
+                    
+                    stats_terminal_output.controls.append(
+                        ft.Text(decoded_line, color=line_color, font_family="Consolas", selectable=True, size=12)
+                    )
+                    
+                    if len(stats_terminal_output.controls) > MAX_LINES:
+                        del stats_terminal_output.controls[0]
+                    
+                    if line_count % BATCH_SIZE == 0:
+                        page.update() 
+                        await stats_terminal_output.scroll_to(offset=-1, duration=50) 
+        
+            await process.wait()
+
+            if process.returncode == 0:
+                stats_aio_status_text.value = "Statistics generated successfully!"
+                stats_aio_status_text.color = ft.Colors.GREEN_400
+                page.snack_bar = ft.SnackBar(content=ft.Text("✅ Descriptive statistics AIO completed successfully!"), bgcolor=ft.Colors.GREEN_800)
+                page.snack_bar.open = True
+            else:
+                stats_aio_status_text.value = f"Script failed with exit code {process.returncode}"
+                stats_aio_status_text.color = ft.Colors.RED_400
+
+        except Exception as err:
+            stats_aio_status_text.value = f"Error: {err}"
+            stats_aio_status_text.color = ft.Colors.RED_400
+            stats_terminal_output.controls.append(ft.Text(f"Error: {err}", color=ft.Colors.RED_400, font_family="Consolas", selectable=True))
+            
+        finally:
+            run_stats_btn.disabled = False
+            stats_progress.visible = False
+            page.update()
+
+    # Merge Script Logic
+    async def run_script_merge_files(e):
+        if len(selected_merge_files) < 2:
+        # Show a snackbar or update status text alerting the user they need at least 2 files
+            return
+    
+        out_folder = merge_output_folder.value # Or however you extract this
+        out_file = merge_output_filename.value
+
+        if not selected_merge_files or not out_folder or not out_file:
             merge_status_text.value = "Please fill in all paths and filenames first!"
             merge_status_text.color = ft.Colors.RED_400
             page.update()
@@ -471,7 +749,7 @@ def main(page: ft.Page):
         try:
             command = [
                 sys.executable, "-u", "src/merge_excel.py", 
-                f1, f2, out_folder, out_name
+                *selected_merge_files, out_folder, out_file
             ]
             
             process = await asyncio.create_subprocess_exec(
@@ -537,6 +815,7 @@ def main(page: ft.Page):
 
     run_filter_btn.on_click = run_script_excel_filtering
     run_stats_btn.on_click = run_script_excel_descriptive_stat
+    run_stats_aio_btn.on_click = run_script_excel_descriptive_stat_aio
     run_merge_btn.on_click = run_script_merge_files # Hooked up the new logic
 
     # ==========================================
@@ -613,20 +892,49 @@ def main(page: ft.Page):
 
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
 
-                    # 🚀 NEW: Step 3: Merge Card
+                    # Step 3: Statistics Card AIO
+                    ft.Card(
+                        content=ft.Container(
+                            padding=20,
+                            content=ft.Column([
+                                ft.ListTile(
+                                    leading=ft.Icon(ft.Icons.BAR_CHART_ROUNDED, size=30, color=ft.Colors.PURPLE_400),
+                                    title=ft.Text("Step 3: Descriptive AIO Statistics", weight=ft.FontWeight.BOLD, size=20),
+                                    subtitle=ft.Text("Generate summary statistics from your filtered datasets.")
+                                ),
+                                ft.Divider(),
+                                ft.Markdown(
+                                    """
+* **What will come out of this funciton?** If all your tags are properly presented in the name of each file, for example: F --> Female; WT -> Wild Type; Test -> FOOTPRINT, this script will filter each data file and present in new columns all the information regarding gender, test type and experimental group.                                    
+* **Select Filtered Data Folder:** Choose the directory containing the `.xlsx` files you just processed in Step 1.
+* **Select Output Folder (Optional):** Choose a destination for your final statistics blocks.
+* **Select Experiment:** Ensure the experiment type matches your dataset for proper file naming.
+* **Run:** Click **Run Descriptive AIO Statistics** to compile the final analysis.
+                                    """, 
+                                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+                                )
+                            ])
+                        ),
+                        elevation=2,
+                    ),
+
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+
+                    # 🚀 NEW: Step 4: Merge Card
                     ft.Card(
                         content=ft.Container(
                             padding=20,
                             content=ft.Column([
                                 ft.ListTile(
                                     leading=ft.Icon(ft.Icons.CALL_MERGE, size=30, color=ft.Colors.ORANGE_400),
-                                    title=ft.Text("Step 3: Merge Data (Optional)", weight=ft.FontWeight.BOLD, size=20),
+                                    title=ft.Text("Step 4: Merge Data (Optional)", weight=ft.FontWeight.BOLD, size=20),
                                     subtitle=ft.Text("Combine two identically structured Excel files into one single file.")
                                 ),
                                 ft.Divider(),
                                 ft.Markdown(
                                     """
-* **Select 1st & 2nd Files:** Choose the two `.xlsx` files you wish to combine. They must share the same sheets and columns.
+* **When to use this feature:** When you want to merge files from different experiments, time points, or conditions that share the same structure (sheets and columns).
+* **Select all the files you want to merge:** Choose the two or more `.xlsx` files you wish to combine. They must share the same sheets and columns.
 * **Select Output Folder:** Choose the destination folder for your newly merged file.
 * **Output File Name:** Type the desired name for your new file (e.g., `combined_statistics.xlsx`).
 * **Run:** Click **Run File Merge** to vertically stack the data from both files into a single master document.
@@ -756,44 +1064,36 @@ def main(page: ft.Page):
         scroll=ft.ScrollMode.AUTO
     )
 
-    # 🚀 NEW: Merge View Page Setup
-    merge_view = ft.Column(
+
+    stats_aio_view = ft.Column(
         [
             ft.Container(
                 content=ft.Column([
-                    ft.Text("Merge Excel Files", size=28, weight=ft.FontWeight.BOLD),
+                    ft.Text("Descriptive Statistics - AIO", size=28, weight=ft.FontWeight.BOLD),
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                     
                     ft.Row(
                         [
-                            ft.Column([ft.Row([pick_file1_button, merge_file1_input, clear_file1_btn]), merge_selected_file1_path], expand=True),
-                            ft.Column([ft.Row([pick_file2_button, merge_file2_input, clear_file2_btn]), merge_selected_file2_path], expand=True)
+                            ft.Column([ft.Row([pick_stats_aio_input_button, stats_input_aio_folder, clear_stats_aio_in_btn]), stats_selected_input_aio_path], expand=True),
+                            ft.Column([ft.Row([pick_stats_aio_output_button, stats_output_aio_folder, clear_stats_aio_out_btn]), stats_selected_output_aio_path], expand=True)
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         vertical_alignment=ft.CrossAxisAlignment.START 
                     ),
 
                     ft.Divider(height=20),
-                    ft.Text("Output Configuration", size=18, weight=ft.FontWeight.W_500),
-                    
-                    ft.Row(
-                        [
-                            ft.Column([ft.Row([pick_merge_output_button, merge_output_folder, clear_merge_out_btn]), merge_selected_output_path], expand=True),
-                            ft.Column([merge_output_filename, ft.Text("Make sure to include .xlsx", color=ft.Colors.WHITE_54, italic=True)], expand=True)
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        vertical_alignment=ft.CrossAxisAlignment.START 
-                    ),
+                    ft.Text("Tag Configuration", size=18, weight=ft.FontWeight.W_500),
+                    ft.Row([stats_tagging_section], alignment=ft.MainAxisAlignment.START),
                     
                     ft.Divider(height=20),
-                    merge_terminal_section,
+                    stats_terminal_aio_section,
                     ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
 
-                    ft.Row([run_merge_btn], alignment=ft.MainAxisAlignment.CENTER, wrap=True),
-                    ft.Row([merge_progress], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([run_stats_aio_btn], alignment=ft.MainAxisAlignment.CENTER, wrap=True),
+                    ft.Row([stats_aio_progress], alignment=ft.MainAxisAlignment.CENTER),
                     
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                    merge_status_text,
+                    stats_status_text,
                 ]),
                 padding=ft.Padding.only(right=20)
             )
@@ -801,6 +1101,70 @@ def main(page: ft.Page):
         expand=True,
         scroll=ft.ScrollMode.AUTO
     )
+
+    # 🚀 NEW: Merged View Page Setup (Matching stats_aio_view layout)
+    merge_view = ft.Column(
+    [
+        ft.Container(
+            content=ft.Column([
+                ft.Text("Merge Excel Files", size=28, weight=ft.FontWeight.BOLD),
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                
+                # Side-by-Side Input and Output Section
+                ft.Row(
+                    [
+                        # --- LEFT COLUMN: INPUT FILES ---
+                        ft.Column([
+                            ft.Text("Input Files", size=16, weight=ft.FontWeight.W_500),
+                            ft.Row([
+                                # 🚀 UPDATED: Pointed directly to your async function!
+                                ft.Button(
+                                    "Select Files", 
+                                    icon=ft.Icons.FOLDER_OPEN,
+                                    on_click=on_merge_files_picked,
+                                    style=hover_style
+                                ),
+                                clear_merge_files_btn  # Your pre-defined clear button
+                            ]),
+                            # Container for the dynamically growing list of files
+                            ft.Container(
+                                content=merge_selected_files_list,
+                                padding=ft.Padding.only(left=5, top=5)
+                            )
+                        ], expand=True),
+
+                        # --- RIGHT COLUMN: OUTPUT CONFIGURATION ---
+                        ft.Column([
+                            ft.Text("Output Configuration", size=16, weight=ft.FontWeight.W_500),
+                            ft.Row([pick_merge_output_button, merge_output_folder, clear_merge_out_btn]),
+                            merge_selected_output_path,
+                            
+                            ft.Divider(height=5, color=ft.Colors.TRANSPARENT), # Subtle spacing
+                            
+                            merge_output_filename,
+                            ft.Text("Make sure to include .xlsx", color=ft.Colors.WHITE_54, italic=True)
+                        ], expand=True)
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.START 
+                ),
+                
+                ft.Divider(height=20),
+                merge_terminal_section,
+                ft.Divider(height=20, color=ft.Colors.TRANSPARENT),
+
+                ft.Row([run_merge_btn], alignment=ft.MainAxisAlignment.CENTER, wrap=True),
+                ft.Row([merge_progress], alignment=ft.MainAxisAlignment.CENTER),
+                
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                merge_status_text,
+            ]),
+            padding=ft.Padding.only(right=20)
+        )
+    ],
+    expand=True,
+    scroll=ft.ScrollMode.AUTO
+)
 
 
     # ==========================================
@@ -847,6 +1211,8 @@ def main(page: ft.Page):
         elif index == 2:
             main_content_area.content = stats_view
         elif index == 3:
+            main_content_area.content = stats_aio_view # Added Route
+        elif index == 4:
             main_content_area.content = merge_view # Added Route
         page.update()
 
@@ -877,6 +1243,7 @@ def main(page: ft.Page):
             create_nav_destination(ft.Icons.HELP_OUTLINE, ft.Icons.HELP, "Tutorial"),
             create_nav_destination(ft.Icons.FILTER_ALT_OUTLINED, ft.Icons.FILTER_ALT, "Data Filtering"),
             create_nav_destination(ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART, "Statistics"),
+            create_nav_destination(ft.Icons.BAR_CHART_ROUNDED, ft.Icons.BAR_CHART, "Statistics - AIO"),
             create_nav_destination(ft.Icons.MERGE_TYPE_OUTLINED, ft.Icons.CALL_MERGE, "Merge Data"),
         ],
         on_change=on_nav_change,

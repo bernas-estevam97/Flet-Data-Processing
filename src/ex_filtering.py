@@ -18,15 +18,18 @@ CHOICE_MAP = {
 }
 
 SUBTRACTION_MAP = {
-    ("0", "groundwalk", "old"): 0.524,
-    ("1", "groundwalk", "old"): 0.524,
+    ("0", "groundwalk", "old"): 0.522, #updated from ---> 0.524
+    ("1", "groundwalk", "old"): 0.525,
     ("0", "groundwalk", "new"): 0.502,
-    ("0", "beamwalk", "old"): 0.44,
-    ("1", "beamwalk", "old"): 0.444,
+    ("1", "groundwalk", "new"): 0.519,
+    ("0", "beamwalk", "old"): 0.445, #updated from ---> 0.44
+    ("1", "beamwalk", "old"): 0.445,
     ("0", "beamwalk", "new"): 0.43,
-    ("0", "gridwalk", "old"): 0.507,
-    ("0", "gridwalk", "new"): 0.486,
+    ("1", "beamwalk", "new"): 0.44,
+    ("0", "gridwalk", "old"): 0.496, #updated from ---> 0.507
+    ("0", "gridwalk", "new"): 0.483, #update from ---> 0.486
     ("1", "gridwalk", "old"): 0.504,
+    ("1", "gridwalk", "new"): 0.498,
     ("0", "swimming", "old"): 0.566, #value takes offset into account
     ("0", "swimming", "new"): 0.568, #value takes offset into account
 }
@@ -84,19 +87,32 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
         else:
             last_index = len(df_raw_clean) - 1
 
-        # --- 2. Filter Kinematics ---
-        df_kin_filtered = df_kin_clean.iloc[start_index : last_index + 1].copy()
+        # 3. Filter Kinematics
+            df_kin_filtered = df_kin_clean.iloc[start_index : last_index + 1].copy()
 
-        # --- 3. Apply Subtraction & Inversion ---
-        target_indices = [5, 6, 9, 11, 13, 17]
+            # 4. Apply Subtraction & Inversion
+            if experiment == "gridwalk":
+                target_indices = [5, 6, 9, 11, 13, 21, 23]
+            else:
+                target_indices = [5, 6, 9, 11, 13, 17]
 
-        # --- NEW DYNAMIC INDEX LOGIC ---
-        # Check Nose Height (index 15) and Tail Tip Height (index 16)
-        if df_kin_filtered.iloc[:, 15].mean() > 0.3:
-            target_indices.append(15)
-        if df_kin_filtered.iloc[:, 16].mean() > 0.3:
-            target_indices.append(16)
-        # -------------------------------
+            #target_indices = [5, 6, 9, 11, 13, 17]
+
+            # --- NEW DYNAMIC INDEX LOGIC ---
+            # Check Nose Height (index 15) and Tail Tip Height (index 16) GRIDWALK HAS DIFFERENT INDEXES FOR NOSE HEIGHT AND TAIL HEIGHT
+            if experiment == "gridwalk":
+                if df_kin_filtered.iloc[:, 15].mean() > 0.3:
+                    target_indices.append(15)
+                if df_kin_filtered.iloc[:, 19].mean() > 0.3:
+                    target_indices.append(19)
+                if df_kin_filtered.iloc[:, 20].mean() > 0.3:
+                    target_indices.append(20)
+            else:
+                if df_kin_filtered.iloc[:, 15].mean() > 0.3:
+                    target_indices.append(15)
+                if df_kin_filtered.iloc[:, 16].mean() > 0.3:
+                    target_indices.append(16)
+            # -------------------------------
 
         target_indices_offset = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
 
