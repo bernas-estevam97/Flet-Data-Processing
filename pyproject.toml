@@ -24,10 +24,11 @@ dev = [
 ]
 
 [tool.flet]
-org = "com.mycompany"
-product = "flet-app"
-company = "Flet"
-copyright = "Copyright (C) 2023-2026 by Flet"
+org = "Bernardo Estevam"
+product = "MotoRater_Data_Processing"
 
 [tool.flet.app]
 path = "src"
+
+[tool.flet.windows]
+icon = "assets/icon.ico"
