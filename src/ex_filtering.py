@@ -290,8 +290,10 @@ def main():
     total_files = len(file_paths)
     indexed_files = [(i, f, total_files) for i, f in enumerate(file_paths)]
 
+    # Dynamic CPU Core Allocation matching optimized_excel_filtering.py
     total_cores = os.cpu_count() or 4
-    num_processes = max(1, total_cores - 2)
+    num_processes = total_cores - 4 if total_cores > 8 else total_cores
+    num_processes = max(1, num_processes)
     
     log_file_path = os.path.join(output_folder, "error_log.txt")
     print(f"\n[INFO] Checking {total_files} files using {num_processes} processes... Logging to: {log_file_path}")
@@ -326,25 +328,22 @@ def main():
         log_file.write(f"Parameters: Choice={choice}, Animal={animal_choice}, Exp={experiment}, Set={old_or_new}, HeightCutoff={height_cutoff}\n")
         log_file.write("-" * 50 + "\n")
 
-        # Try ProcessPoolExecutor first; if BrokenProcessPool occurs (e.g. external M.2 drive process handle lock on Windows), fall back to safe sequential processing
         pool_broken = False
         try:
             with ProcessPoolExecutor(max_workers=num_processes) as executor:
-                futures = {
-                    executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff): item[1]
+                futures = [
+                    executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
                     for item in indexed_files
-                }
+                ]
                 
                 for future in as_completed(futures):
-                    file_path = futures[future]
-                    fname = os.path.basename(file_path)
                     try:
                         res = future.result()
                         handle_result_tuple(res, log_file)
                     except (concurrent.futures.process.BrokenProcessPool, Exception) as exc:
                         pool_broken = True
-                        print(f"[WARN] Process pool interrupted on file '{fname}': {exc}. Switching to safe execution mode...")
-                        log_file.write(f"[WARNING] Process pool interrupted on '{fname}': {exc}\n")
+                        print(f"[WARN] Process pool interrupted ({exc}). Switching to safe execution mode...")
+                        log_file.write(f"[WARNING] Process pool interrupted: {exc}\n")
                         break
 
         except (concurrent.futures.process.BrokenProcessPool, Exception) as pool_err:
@@ -352,7 +351,7 @@ def main():
             print(f"[WARN] Multiprocessing pool exception ({pool_err}). Switching to safe execution mode...")
             log_file.write(f"[WARNING] Multiprocessing pool failed: {pool_err}\n")
 
-        # Fallback processing if ProcessPool fails or breaks on external M.2 drive
+        # Fallback processing if ProcessPool fails or breaks on external drive
         if pool_broken:
             print("\n[INFO] Running remaining files in safe sequential mode...")
             for item in indexed_files:

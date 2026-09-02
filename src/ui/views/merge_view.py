@@ -16,16 +16,71 @@ def build_merge_view(page: ft.Page) -> ft.Control:
 
     output_filename_input = ft.TextField(label="Merged Output Filename", value="Merged_Data.xlsx")
 
+    files_list_column = ft.Column(spacing=4)
+    files_list_container = ft.Container(
+        content=files_list_column,
+        padding=10,
+        bgcolor=ft.Colors.BLACK_12,
+        border_radius=6,
+        border=ft.Border.all(1, AppColors.BORDER),
+        visible=False
+    )
+
+    def render_files_list():
+        files_list_column.controls.clear()
+        if not selected_files:
+            files_list_container.visible = False
+            selected_files_txt.value = "No files selected"
+        else:
+            files_list_container.visible = True
+            selected_files_txt.value = f"{len(selected_files)} files selected"
+            
+            for path in selected_files:
+                fname = os.path.basename(path)
+                
+                def make_remove_handler(file_p):
+                    return lambda _: remove_single_file(file_p)
+
+                row_control = ft.Row(
+                    [
+                        ft.Row(
+                            [
+                                ft.Icon(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, size=18, color=AppColors.PRIMARY),
+                                ft.Text(fname, color=AppColors.TEXT_MAIN, size=13, weight=ft.FontWeight.W_500, overflow=ft.TextOverflow.ELLIPSIS),
+                            ],
+                            spacing=8,
+                            expand=True
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            icon_color=AppColors.ERROR,
+                            icon_size=16,
+                            tooltip=f"Remove {fname}",
+                            style=button_hover_style,
+                            on_click=make_remove_handler(path)
+                        )
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                )
+                files_list_column.controls.append(row_control)
+
+    def remove_single_file(path_to_remove):
+        if path_to_remove in selected_files:
+            selected_files.remove(path_to_remove)
+        render_files_list()
+        page.update()
+
     async def invoke_files_picker(e):
-        nonlocal selected_files
         files = await ft.FilePicker().pick_files(
             allow_multiple=True,
             allowed_extensions=["xlsx", "xls"],
             dialog_title="Select Excel Files"
         )
         if files:
-            selected_files = [f.path for f in files if f.path]
-            selected_files_txt.value = f"{len(selected_files)} files selected"
+            for f in files:
+                if f.path and f.path not in selected_files:
+                    selected_files.append(f.path)
+            render_files_list()
             page.update()
 
     async def invoke_output_picker(e):
@@ -37,9 +92,8 @@ def build_merge_view(page: ft.Page) -> ft.Control:
             page.update()
 
     def reset_selected_files(e):
-        nonlocal selected_files
         selected_files.clear()
-        selected_files_txt.value = "No files selected"
+        render_files_list()
         status_text.value = "Selected files reset."
         status_text.color = AppColors.TEXT_MUTED
         page.update()
@@ -105,7 +159,7 @@ def build_merge_view(page: ft.Page) -> ft.Control:
         status_text.color = AppColors.WARNING
         
         terminal.clear()
-        terminal.append_line("Starting Excel file merge process...")
+        terminal.append_line(f"Starting merge of {len(selected_files)} Excel files...")
         
         run_btn.disabled = True
         progress_bar.visible = True
@@ -162,6 +216,7 @@ def build_merge_view(page: ft.Page) -> ft.Control:
     files_card = create_card(
         ft.Column([
             ft.Row([btn_select_files, btn_reset_files, selected_files_txt], alignment=ft.MainAxisAlignment.START, spacing=10),
+            files_list_container,
             ft.Row([btn_select_output, btn_reset_output, selected_output_txt], alignment=ft.MainAxisAlignment.START, spacing=10),
             output_filename_input
         ], spacing=10),

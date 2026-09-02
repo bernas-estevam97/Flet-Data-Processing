@@ -65,6 +65,4 @@ def main():
         sys.exit(1)
 
 if __name__ == '__main__':
-    # Disable silent downcasting warning if pandas version triggers it
-    pd.set_option('future.no_silent_downcasting', True)
     main()

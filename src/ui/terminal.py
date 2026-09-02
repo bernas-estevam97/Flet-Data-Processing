@@ -53,7 +53,7 @@ class TerminalWindow(object):
         if self.page:
             self.page.update()
 
-    def copy_logs(self, e=None):
+    async def copy_logs(self, e=None):
         lines = []
         for ctrl in self.output_list.controls:
             if isinstance(ctrl, ft.Text) and ctrl.value:
@@ -61,7 +61,7 @@ class TerminalWindow(object):
         
         full_text = "\n".join(lines)
         if self.page and full_text:
-            self.page.clipboard = full_text
+            await ft.Clipboard().set(full_text)
             self.page.snack_bar = ft.SnackBar(
                 content=ft.Text("📋 Terminal logs copied to clipboard!"),
                 bgcolor=ft.Colors.GREEN_800

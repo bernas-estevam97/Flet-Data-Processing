@@ -11,18 +11,35 @@ if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
     except Exception:
         pass
 
-pd.set_option('future.no_silent_downcasting', True)
-
 def extract_data_from_excel(file_path):
     """
     WORKER FUNCTION (Runs in parallel)
     Opens a single Excel file, extracts the needed rows, and returns a dictionary.
     """
     file_name = os.path.basename(file_path)
-    try:
-        df_filtered = pd.read_excel(file_path, sheet_name='Kinematics', header=None, engine='calamine')
-    except Exception as e:
-        return {'error': f"[ERROR] Error reading {file_name}: {e}"}
+    
+    # Ignore temporary Excel lock files (e.g. ~$filename.xlsx)
+    if file_name.startswith('~$') or not os.path.isfile(file_path):
+        return {'error': None, 'skipped': True}
+
+    if os.path.getsize(file_path) == 0:
+        return {'error': f"[ERROR] File '{file_name}' is empty (0 bytes)."}
+
+    df_filtered = None
+    read_errors = []
+    
+    for engine_name in ['calamine', 'openpyxl', None]:
+        try:
+            if engine_name:
+                df_filtered = pd.read_excel(file_path, sheet_name='Kinematics', header=None, engine=engine_name)
+            else:
+                df_filtered = pd.read_excel(file_path, sheet_name='Kinematics', header=None)
+            break
+        except Exception as err:
+            read_errors.append(f"{engine_name or 'default'}: {err}")
+
+    if df_filtered is None:
+        return {'error': f"[ERROR] Error reading {file_name}: {'; '.join(read_errors)}"}
 
     parts = file_name.split("_")
     file_id_split = "_".join(parts[:parts.index("out")]) if "out" in parts else file_name
@@ -69,6 +86,7 @@ def extract_data_from_excel(file_path):
 
     return {
         'error': None,
+        'skipped': False,
         'file_path': file_path,
         'original_id': file_id_split,
         'base_id': base_id,
@@ -124,7 +142,10 @@ def main():
         should_group = group_choice in ['y', 'yes']
 
     # --- 3. GET FILES ---
-    file_paths = sorted([os.path.join(folder_input, p) for p in os.listdir(folder_input) if p.endswith('filtered.xlsx')])
+    file_paths = sorted([
+        os.path.join(folder_input, p) for p in os.listdir(folder_input) 
+        if p.lower().endswith('filtered.xlsx') and not p.startswith('~$')
+    ])
     if not file_paths:
         print(f"[WARNING] No '*filtered.xlsx' files found in '{folder_input}'.")
         return
@@ -149,7 +170,9 @@ def main():
     master_header = None
 
     for res in results:
-        if res['error']:
+        if res.get('skipped'):
+            continue
+        if res.get('error'):
             print(res['error'])
             continue
         
