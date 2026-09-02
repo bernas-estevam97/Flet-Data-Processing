@@ -162,3 +162,7 @@ cython_debug/
 
 # Flet
 storage/
+
+
+#Agents-Help-File
+PROJECT_STATE.md

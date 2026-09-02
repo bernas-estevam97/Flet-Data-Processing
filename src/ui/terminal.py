@@ -7,6 +7,15 @@ class TerminalWindow(object):
         self.title = title
         self.output_list = ft.ListView(expand=True, spacing=2, auto_scroll=False)
         
+        self.copy_btn = ft.IconButton(
+            icon=ft.Icons.COPY_OUTLINED,
+            icon_color=AppColors.TEXT_MUTED,
+            tooltip="Copy Terminal Logs to Clipboard",
+            icon_size=18,
+            style=button_hover_style,
+            on_click=self.copy_logs
+        )
+
         self.clear_btn = ft.IconButton(
             icon=ft.Icons.DELETE_OUTLINED,
             icon_color=AppColors.TEXT_MUTED,
@@ -17,8 +26,8 @@ class TerminalWindow(object):
         )
         
         self.container = ft.Container(
-            content=self.output_list,
-            height=160,
+            content=ft.SelectionArea(content=self.output_list),
+            height=180,
             bgcolor=AppColors.TERMINAL_BG,
             border_radius=8,
             padding=10,
@@ -28,7 +37,7 @@ class TerminalWindow(object):
         self.view = ft.Column([
             ft.Row([
                 ft.Text(self.title, size=13, weight=ft.FontWeight.BOLD, color=AppColors.TEXT_MUTED),
-                self.clear_btn
+                ft.Row([self.copy_btn, self.clear_btn], spacing=4)
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             self.container
         ], spacing=6)
@@ -39,9 +48,25 @@ class TerminalWindow(object):
     def clear(self, e=None):
         self.output_list.controls.clear()
         self.output_list.controls.append(
-            ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True, size=12)
+            ft.Text("Terminal cleared.", color=ft.Colors.WHITE_54, italic=True, size=12, selectable=True)
         )
         if self.page:
+            self.page.update()
+
+    def copy_logs(self, e=None):
+        lines = []
+        for ctrl in self.output_list.controls:
+            if isinstance(ctrl, ft.Text) and ctrl.value:
+                lines.append(ctrl.value)
+        
+        full_text = "\n".join(lines)
+        if self.page and full_text:
+            self.page.clipboard = full_text
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("📋 Terminal logs copied to clipboard!"),
+                bgcolor=ft.Colors.GREEN_800
+            )
+            self.page.snack_bar.open = True
             self.page.update()
 
     def append_line(self, line: str):
@@ -49,9 +74,9 @@ class TerminalWindow(object):
             return
         
         line_color = ft.Colors.GREEN_400
-        if "[ERROR]" in line or "[FAIL]" in line or "Traceback" in line or "Exception" in line:
+        if "[ERROR]" in line or "[FAIL]" in line or "Traceback" in line or "Exception" in line or "BrokenProcessPool" in line:
             line_color = ft.Colors.RED_400
-        elif "[WARNING]" in line or "[WARN]" in line:
+        elif "[WARN]" in line or "[WARNING]" in line:
             line_color = ft.Colors.AMBER_400
         elif "[SKIPPED]" in line or "Skipped" in line:
             line_color = ft.Colors.CYAN_300

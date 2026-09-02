@@ -6,7 +6,8 @@ import datetime
 import warnings
 import pandas as pd
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import concurrent.futures
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 # Reconfigure stdout to utf-8 on Windows if needed
 if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
@@ -77,9 +78,14 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
         with warnings.catch_warnings(record=True) as w_log:
             warnings.simplefilter("always") 
             
-            with pd.ExcelFile(file_path, engine='calamine') as xls:
-                df_raw = pd.read_excel(xls, sheet_name='Positions (used)')
-                df_kin = pd.read_excel(xls, sheet_name='Kinematics')
+            # Attempt reading with calamine engine, fallback to openpyxl if engine error occurs
+            try:
+                with pd.ExcelFile(file_path, engine='calamine') as xls:
+                    df_raw = pd.read_excel(xls, sheet_name='Positions (used)')
+                    df_kin = pd.read_excel(xls, sheet_name='Kinematics')
+            except Exception:
+                df_raw = pd.read_excel(file_path, sheet_name='Positions (used)')
+                df_kin = pd.read_excel(file_path, sheet_name='Kinematics')
 
             # --- 2. Find Start/End Indices ---
             threshold = 0.00001
@@ -293,39 +299,76 @@ def main():
     start_time = time.perf_counter()
     failed_files, files_with_warnings, skipped_files = [], [], []
 
+    def handle_result_tuple(res_tuple, log_file):
+        success, fname, message, warnings_list, is_skipped = res_tuple
+        if success:
+            if is_skipped:
+                print(message)
+                log_file.write(f"[SKIPPED] {fname}\n")
+                skipped_files.append(fname)
+            elif warnings_list:
+                print(f"[WARN] {fname}: Processed with warnings.")
+                log_file.write(f"[WARNING] {fname}\n")
+                for w in warnings_list:
+                    log_file.write(f"    - {w}\n")
+                files_with_warnings.append(fname)
+            else:
+                print(message)
+                log_file.write(f"[SUCCESS] {fname}\n")
+        else:
+            error_short = message.split('\n')[0]
+            print(f"[ERROR] File '{fname}': {error_short}")
+            log_file.write(f"\n[ERROR] File: {fname}\n{message}\n{'-'*30}\n")
+            failed_files.append((fname, error_short))
+
     with open(log_file_path, 'w', encoding='utf-8') as log_file:
         log_file.write(f"--- Processing Started at {datetime.datetime.now()} ---\n")
         log_file.write(f"Parameters: Choice={choice}, Animal={animal_choice}, Exp={experiment}, Set={old_or_new}, HeightCutoff={height_cutoff}\n")
         log_file.write("-" * 50 + "\n")
 
-        with ProcessPoolExecutor(max_workers=num_processes) as executor:
-            futures = [
-                executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
-                for item in indexed_files
-            ]
-            
-            for future in as_completed(futures):
-                success, fname, message, warnings_list, is_skipped = future.result()
+        # Try ProcessPoolExecutor first; if BrokenProcessPool occurs (e.g. external M.2 drive process handle lock on Windows), fall back to safe sequential processing
+        pool_broken = False
+        try:
+            with ProcessPoolExecutor(max_workers=num_processes) as executor:
+                futures = {
+                    executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff): item[1]
+                    for item in indexed_files
+                }
                 
-                if success:
-                    if is_skipped:
-                        print(message)
-                        log_file.write(f"[SKIPPED] {fname}\n")
-                        skipped_files.append(fname)
-                    elif warnings_list:
-                        print(f"[WARN] {fname}: Processed with warnings.")
-                        log_file.write(f"[WARNING] {fname}\n")
-                        for w in warnings_list:
-                            log_file.write(f"    - {w}\n")
-                        files_with_warnings.append(fname)
-                    else:
-                        print(message)
-                        log_file.write(f"[SUCCESS] {fname}\n")
-                else:
-                    error_short = message.split('\n')[0]
-                    print(f"[ERROR] File '{fname}': {error_short}")
-                    log_file.write(f"\n[ERROR] File: {fname}\n{message}\n{'-'*30}\n")
-                    failed_files.append((fname, error_short))
+                for future in as_completed(futures):
+                    file_path = futures[future]
+                    fname = os.path.basename(file_path)
+                    try:
+                        res = future.result()
+                        handle_result_tuple(res, log_file)
+                    except (concurrent.futures.process.BrokenProcessPool, Exception) as exc:
+                        pool_broken = True
+                        print(f"[WARN] Process pool interrupted on file '{fname}': {exc}. Switching to safe execution mode...")
+                        log_file.write(f"[WARNING] Process pool interrupted on '{fname}': {exc}\n")
+                        break
+
+        except (concurrent.futures.process.BrokenProcessPool, Exception) as pool_err:
+            pool_broken = True
+            print(f"[WARN] Multiprocessing pool exception ({pool_err}). Switching to safe execution mode...")
+            log_file.write(f"[WARNING] Multiprocessing pool failed: {pool_err}\n")
+
+        # Fallback processing if ProcessPool fails or breaks on external M.2 drive
+        if pool_broken:
+            print("\n[INFO] Running remaining files in safe sequential mode...")
+            for item in indexed_files:
+                file_path = item[1]
+                fname = os.path.basename(file_path)
+                out_file = os.path.join(output_folder, os.path.splitext(fname)[0] + '_filtered.xlsx')
+                if os.path.exists(out_file) or fname in skipped_files or any(f[0] == fname for f in failed_files) or fname in [f for f in files_with_warnings]:
+                    continue
+                try:
+                    res = filter_excel_by_column(item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
+                    handle_result_tuple(res, log_file)
+                except Exception as exc:
+                    error_str = str(exc) or exc.__class__.__name__
+                    print(f"[ERROR] File '{fname}': {error_str}")
+                    log_file.write(f"\n[ERROR] File: {fname}: {error_str}\n{'-'*30}\n")
+                    failed_files.append((fname, error_str))
 
         duration = round(time.perf_counter() - start_time, 2)
         end_msg = f"\n[DONE] Finished in {duration} seconds.\n"
@@ -347,6 +390,7 @@ def main():
 
         print(end_msg + summary_msg)
         log_file.write(end_msg + summary_msg)
+
 
 if __name__ == '__main__':
     try:
