@@ -2,14 +2,17 @@ import os
 import sys
 import re
 import pandas as pd
-from multiprocessing import Pool, cpu_count
+import multiprocessing
+from multiprocessing import Pool, cpu_count, freeze_support
 
-# Reconfigure stdout to utf-8 on Windows if needed
-if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+# Reconfigure stdout to utf-8 and line buffering
+try:
+    if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    else:
+        sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 def extract_data_from_excel(file_path):
     """
@@ -82,7 +85,7 @@ def extract_data_from_excel(file_path):
         duration_values = found_duration_rows.iloc[-1]
         duration_val = duration_values.iloc[1]
 
-    print(f"[EXTRACT] Read data from: {file_name}")
+    print(f"[EXTRACT] Read data from: {file_name}", flush=True)
 
     return {
         'error': None,
@@ -154,15 +157,23 @@ def main():
     print(f"[INFO] Found {total_files} files. Starting parallel data extraction...")
 
     # --- PHASE 1: READ MULTIPLE FILES IN PARALLEL ---
-    num_cores = max(1, cpu_count() - 2) 
+    total_cores = cpu_count() or 4
+    reserved_cores = 2 if total_cores > 4 else 1
+    num_cores = max(1, total_cores - reserved_cores)
     
-    with Pool(processes=num_cores) as pool:
+    pool = None
+    try:
+        pool = Pool(processes=num_cores)
         results = pool.map(extract_data_from_excel, file_paths)
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
 
     if should_group:
-        print("Data extraction complete! Grouping trials and calculating means...\n")
+        print("Data extraction complete! Grouping trials and calculating means...\n", flush=True)
     else:
-        print("Data extraction complete! Compiling data without grouping...\n")
+        print("Data extraction complete! Compiling data without grouping...\n", flush=True)
 
     # --- PHASE 2: WRITE SEQUENTIALLY TO ONE EXCEL FILE ---
     compiled_stats = {sheet: [] for sheet in ["Mean", "Std", "Median", "Min", "Max", "Max_Normalized_Mean", "CV"]}
@@ -173,7 +184,7 @@ def main():
         if res.get('skipped'):
             continue
         if res.get('error'):
-            print(res['error'])
+            print(res['error'], flush=True)
             continue
         
         if master_header is None and res.get('header_stats'):
@@ -190,38 +201,52 @@ def main():
 
     output_filename = f'{experiment_name.upper()}_descriptive_statistics.xlsx'
     output_path = os.path.join(folder_output, output_filename)
+    temp_path = os.path.join(folder_output, f"~${os.path.basename(output_path)}")
 
-    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
-        for sheet_name, rows in compiled_stats.items():
-            if rows: 
-                df = pd.DataFrame(rows, columns=master_header)
-                numeric_cols = df.columns.drop('Ids')
-                
-                df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+    try:
+        with pd.ExcelWriter(temp_path, engine='xlsxwriter') as writer:
+            for sheet_name, rows in compiled_stats.items():
+                if rows: 
+                    df = pd.DataFrame(rows, columns=master_header)
+                    numeric_cols = df.columns.drop('Ids')
+                    
+                    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                    
+                    if should_group:
+                        df_final = df.groupby('Ids', as_index=False)[numeric_cols].mean()
+                    else:
+                        df_final = df
+                        
+                    df_final.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            if compiled_durations:
+                df_duration = pd.DataFrame(compiled_durations, columns=["Ids", "Time Duration"])
+                df_duration['Time Duration'] = pd.to_numeric(df_duration['Time Duration'], errors='coerce')
                 
                 if should_group:
-                    df_final = df.groupby('Ids', as_index=False)[numeric_cols].mean()
+                    df_duration_final = df_duration.groupby('Ids', as_index=False).mean()
                 else:
-                    df_final = df
+                    df_duration_final = df_duration
                     
-                df_final.to_excel(writer, sheet_name=sheet_name, index=False)
+                df_duration_final.to_excel(writer, sheet_name="Time Duration", index=False)
 
-        if compiled_durations:
-            df_duration = pd.DataFrame(compiled_durations, columns=["Ids", "Time Duration"])
-            df_duration['Time Duration'] = pd.to_numeric(df_duration['Time Duration'], errors='coerce')
-            
-            if should_group:
-                df_duration_final = df_duration.groupby('Ids', as_index=False).mean()
-            else:
-                df_duration_final = df_duration
-                
-            df_duration_final.to_excel(writer, sheet_name="Time Duration", index=False)
+        if os.path.exists(temp_path):
+            os.replace(temp_path, output_path)
 
-    print(f"[SUCCESS] Data saved to: {output_path}")
+        print(f"[SUCCESS] Data saved to: {output_path}", flush=True)
+
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        raise e
 
 if __name__ == '__main__':
+    freeze_support()
     try:
         main()
-    except KeyboardInterrupt:
-        print('\nProgram terminated by user. Exiting...')
+    except (KeyboardInterrupt, SystemExit):
+        print('\n[INFO] Program stopped.', flush=True)
         sys.exit(0)

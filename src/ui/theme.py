@@ -23,6 +23,13 @@ def primary_button_style():
         bgcolor=AppColors.PRIMARY
     )
 
+def danger_button_style():
+    return ft.ButtonStyle(
+        mouse_cursor=ft.MouseCursor.CLICK,
+        color=ft.Colors.WHITE,
+        bgcolor=AppColors.ERROR
+    )
+
 def create_card(content: ft.Control, title: str = None, icon: str = None) -> ft.Container:
     controls = []
     if title:

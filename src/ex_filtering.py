@@ -6,15 +6,18 @@ import datetime
 import warnings
 import pandas as pd
 import numpy as np
+import multiprocessing
 import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-# Reconfigure stdout to utf-8 on Windows if needed
-if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+# Reconfigure stdout to utf-8 and line buffering
+try:
+    if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    else:
+        sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 # Suppress pandas concatenation warnings for all-NA columns
 warnings.filterwarnings("ignore", category=FutureWarning, module="pandas.core.reshape.concat")
@@ -211,12 +214,16 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
                 row_data[1] = time_duration
             duration_df = pd.DataFrame([row_data], columns=df_kin_filtered.columns)
 
-            with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+            temp_output_file = os.path.join(output_folder, f"~${os.path.basename(output_file)}")
+            with pd.ExcelWriter(temp_output_file, engine='xlsxwriter') as writer:
                 df_raw.to_excel(writer, sheet_name='Positions (used)', index=False)
                 df_kin_filtered.to_excel(writer, sheet_name='Kinematics', index=False)
                 start_row = len(df_kin_filtered) + 2
                 duration_df.to_excel(writer, sheet_name='Kinematics', startrow=start_row, index=False, header=False)
                 stats_output.to_excel(writer, sheet_name='Kinematics', startrow=start_row + 1, index=False, header=False)
+
+            if os.path.exists(temp_output_file):
+                os.replace(temp_output_file, output_file)
 
             for w in w_log:
                 captured_warnings.append(f"{w.category.__name__}: {str(w.message)}")
@@ -224,6 +231,12 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
         return (True, file_name, f"Processed file {index + 1} of {total_files}: {file_name}", captured_warnings, False)
 
     except Exception as e:
+        temp_output_file = os.path.join(output_folder, f"~${os.path.basename(output_file)}")
+        if os.path.exists(temp_output_file):
+            try:
+                os.remove(temp_output_file)
+            except Exception:
+                pass
         error_msg = f"{e}\n{traceback.format_exc()}"
         return (False, file_name, error_msg, [], False)
 
@@ -290,13 +303,13 @@ def main():
     total_files = len(file_paths)
     indexed_files = [(i, f, total_files) for i, f in enumerate(file_paths)]
 
-    # Dynamic CPU Core Allocation matching optimized_excel_filtering.py
+    # Dynamic CPU Core Allocation - leaving cores for OS & UI responsiveness
     total_cores = os.cpu_count() or 4
-    num_processes = total_cores - 4 if total_cores > 8 else total_cores
-    num_processes = max(1, num_processes)
+    reserved_cores = 2 if total_cores > 4 else 1
+    num_processes = max(1, total_cores - reserved_cores)
     
     log_file_path = os.path.join(output_folder, "error_log.txt")
-    print(f"\n[INFO] Checking {total_files} files using {num_processes} processes... Logging to: {log_file_path}")
+    print(f"\n[INFO] Checking {total_files} files using {num_processes} processes... Logging to: {log_file_path}", flush=True)
     
     start_time = time.perf_counter()
     failed_files, files_with_warnings, skipped_files = [], [], []
@@ -305,21 +318,21 @@ def main():
         success, fname, message, warnings_list, is_skipped = res_tuple
         if success:
             if is_skipped:
-                print(message)
+                print(message, flush=True)
                 log_file.write(f"[SKIPPED] {fname}\n")
                 skipped_files.append(fname)
             elif warnings_list:
-                print(f"[WARN] {fname}: Processed with warnings.")
+                print(f"[WARN] {fname}: Processed with warnings.", flush=True)
                 log_file.write(f"[WARNING] {fname}\n")
                 for w in warnings_list:
                     log_file.write(f"    - {w}\n")
                 files_with_warnings.append(fname)
             else:
-                print(message)
+                print(message, flush=True)
                 log_file.write(f"[SUCCESS] {fname}\n")
         else:
             error_short = message.split('\n')[0]
-            print(f"[ERROR] File '{fname}': {error_short}")
+            print(f"[ERROR] File '{fname}': {error_short}", flush=True)
             log_file.write(f"\n[ERROR] File: {fname}\n{message}\n{'-'*30}\n")
             failed_files.append((fname, error_short))
 
@@ -329,27 +342,38 @@ def main():
         log_file.write("-" * 50 + "\n")
 
         pool_broken = False
+        executor = None
         try:
-            with ProcessPoolExecutor(max_workers=num_processes) as executor:
-                futures = [
-                    executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
-                    for item in indexed_files
-                ]
-                
-                for future in as_completed(futures):
+            executor = ProcessPoolExecutor(max_workers=num_processes)
+            futures = [
+                executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
+                for item in indexed_files
+            ]
+            
+            for future in as_completed(futures):
+                try:
+                    res = future.result()
+                    handle_result_tuple(res, log_file)
+                except (concurrent.futures.process.BrokenProcessPool, Exception) as exc:
+                    pool_broken = True
+                    print(f"[WARN] Process pool interrupted ({exc}). Switching to safe execution mode...", flush=True)
+                    log_file.write(f"[WARNING] Process pool interrupted: {exc}\n")
                     try:
-                        res = future.result()
-                        handle_result_tuple(res, log_file)
-                    except (concurrent.futures.process.BrokenProcessPool, Exception) as exc:
-                        pool_broken = True
-                        print(f"[WARN] Process pool interrupted ({exc}). Switching to safe execution mode...")
-                        log_file.write(f"[WARNING] Process pool interrupted: {exc}\n")
-                        break
+                        executor.shutdown(wait=False, cancel_futures=True)
+                    except Exception:
+                        pass
+                    break
 
         except (concurrent.futures.process.BrokenProcessPool, Exception) as pool_err:
             pool_broken = True
-            print(f"[WARN] Multiprocessing pool exception ({pool_err}). Switching to safe execution mode...")
+            print(f"[WARN] Multiprocessing pool exception ({pool_err}). Switching to safe execution mode...", flush=True)
             log_file.write(f"[WARNING] Multiprocessing pool failed: {pool_err}\n")
+        finally:
+            if executor is not None:
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
 
         # Fallback processing if ProcessPool fails or breaks on external drive
         if pool_broken:
@@ -392,7 +416,8 @@ def main():
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     try:
         main()
-    except KeyboardInterrupt:
-        print("\nProgram terminated by user.")
+    except (KeyboardInterrupt, SystemExit):
+        print("\n[INFO] Program stopped.", flush=True)

@@ -3,8 +3,9 @@ import asyncio
 import sys
 import os
 import json
-from ui.theme import AppColors, create_card, button_hover_style, primary_button_style
+from ui.theme import AppColors, create_card, button_hover_style, primary_button_style, danger_button_style
 from ui.terminal import TerminalWindow
+from process_manager import process_manager
 
 def build_stats_aio_view(page: ft.Page) -> ft.Control:
     status_text = ft.Text("System Ready", color=AppColors.TEXT_MUTED, size=14)
@@ -156,9 +157,34 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         tooltip="Averages trial files sharing base subject ID and identified tags"
     )
 
+    TASK_ID = "stats_aio"
+
     terminal = TerminalWindow(page)
     progress_bar = ft.ProgressBar(visible=False, color=AppColors.PRIMARY)
     run_btn = ft.Button("Run Descriptive AIO Statistics", icon=ft.Icons.AUTO_AWESOME, style=primary_button_style())
+    stop_btn = ft.Button(
+        "Force Stop",
+        icon=ft.Icons.STOP_CIRCLE,
+        style=danger_button_style(),
+        disabled=True,
+        tooltip="Force stop running processes"
+    )
+
+    async def stop_stats_aio(e):
+        stop_btn.disabled = True
+        status_text.value = "Stopping processes..."
+        status_text.color = AppColors.WARNING
+        terminal.append_line("[WARN] Stopping processes requested by user...")
+        page.update()
+        count = await process_manager.kill_all()
+        page.snack_bar = ft.SnackBar(
+            content=ft.Text(f"⏹️ Force stopped {count} running process(es)."),
+            bgcolor=ft.Colors.AMBER_800
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    stop_btn.on_click = stop_stats_aio
 
     async def run_stats_aio(e):
         if not input_folder_path:
@@ -178,6 +204,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         terminal.append_line("Starting descriptive statistics AIO script...")
         
         run_btn.disabled = True
+        stop_btn.disabled = False
         progress_bar.visible = True
         page.update()
 
@@ -192,6 +219,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT
             )
+            process_manager.register(TASK_ID, "AIO Statistics", process)
 
             line_count = 0
             while True:
@@ -208,7 +236,11 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
 
             await process.wait()
 
-            if process.returncode == 0:
+            if process_manager.was_stopped_by_user(TASK_ID):
+                status_text.value = "Process forcefully stopped by user."
+                status_text.color = AppColors.WARNING
+                terminal.append_line("[STOPPED] AIO Statistics script terminated by user.")
+            elif process.returncode == 0:
                 status_text.value = "AIO Descriptive statistics completed successfully!"
                 status_text.color = AppColors.SUCCESS
                 page.snack_bar = ft.SnackBar(content=ft.Text("✅ Tagged AIO Statistics completed!"), bgcolor=ft.Colors.GREEN_800)
@@ -218,12 +250,19 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
                 status_text.color = AppColors.ERROR
 
         except Exception as err:
-            status_text.value = f"Error: {err}"
-            status_text.color = AppColors.ERROR
-            terminal.append_line(f"[ERROR] {err}")
+            if process_manager.was_stopped_by_user(TASK_ID):
+                status_text.value = "Process forcefully stopped by user."
+                status_text.color = AppColors.WARNING
+                terminal.append_line("[STOPPED] AIO Statistics script terminated by user.")
+            else:
+                status_text.value = f"Error: {err}"
+                status_text.color = AppColors.ERROR
+                terminal.append_line(f"[ERROR] {err}")
             
         finally:
+            process_manager.unregister(TASK_ID)
             run_btn.disabled = False
+            stop_btn.disabled = True
             progress_bar.visible = False
             page.update()
 
@@ -254,7 +293,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         ft.Container(height=10),
         folder_card,
         tagging_card,
-        run_btn,
+        ft.Row([run_btn, stop_btn], spacing=10),
         progress_bar,
         terminal.get_control()
     ], spacing=15, padding=20)

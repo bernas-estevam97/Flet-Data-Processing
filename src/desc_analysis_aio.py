@@ -3,14 +3,17 @@ import sys
 import re
 import json
 import pandas as pd
-from multiprocessing import Pool, cpu_count
+import multiprocessing
+from multiprocessing import Pool, cpu_count, freeze_support
 
-# Reconfigure stdout to utf-8 on Windows if needed
-if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+# Reconfigure stdout to utf-8 and line buffering
+try:
+    if sys.stdout.encoding is not None and sys.stdout.encoding.lower() != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+    else:
+        sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 def extract_data_from_excel(file_path, user_tags):
     """
@@ -99,7 +102,7 @@ def extract_data_from_excel(file_path, user_tags):
         duration_values = found_duration_rows.iloc[-1]
         duration_val = duration_values.iloc[1]
 
-    print(f"[EXTRACT] Read data from: {file_id}")
+    print(f"[EXTRACT] Read data from: {file_id}", flush=True)
 
     return {
         'error': None,
@@ -195,14 +198,23 @@ def main():
     tasks = [(fp, user_tags) for fp in file_paths]
 
     # --- PHASE 1: READ MULTIPLE FILES IN PARALLEL ---
-    num_cores = max(1, cpu_count() - 2)
-    with Pool(processes=num_cores) as pool:
+    total_cores = cpu_count() or 4
+    reserved_cores = 2 if total_cores > 4 else 1
+    num_cores = max(1, total_cores - reserved_cores)
+    
+    pool = None
+    try:
+        pool = Pool(processes=num_cores)
         results = pool.map(worker_wrapper, tasks)
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
 
     if should_group:
-        print("Data extraction complete! Grouping trials by Subject ID and Identified Tags...\n")
+        print("Data extraction complete! Grouping trials by Subject ID and Identified Tags...\n", flush=True)
     else:
-        print("Data extraction complete! Compiling data without grouping...\n")
+        print("Data extraction complete! Compiling data without grouping...\n", flush=True)
 
     # Determine dynamic tag column headers
     tag_headers = list(dict.fromkeys(user_tags.values())) if user_tags else []
@@ -216,7 +228,7 @@ def main():
         if res.get('skipped'):
             continue
         if res.get('error'):
-            print(res['error'])
+            print(res['error'], flush=True)
             continue
         
         if master_header is None and res.get('header_stats'):
@@ -243,41 +255,55 @@ def main():
 
     output_filename = f'{experiment_name.upper()}_AIO_descriptive_statistics.xlsx'
     output_path = os.path.join(folder_output, output_filename)
+    temp_path = os.path.join(folder_output, f"~${os.path.basename(output_path)}")
 
-    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
-        group_cols = ["Ids"] + tag_headers if should_group else None
+    try:
+        with pd.ExcelWriter(temp_path, engine='xlsxwriter') as writer:
+            group_cols = ["Ids"] + tag_headers if should_group else None
 
-        for sheet_name, rows in compiled_stats.items():
-            if rows: 
-                df = pd.DataFrame(rows, columns=master_header)
-                numeric_cols = [c for c in df.columns if c not in ["Ids"] + tag_headers]
-                
-                df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+            for sheet_name, rows in compiled_stats.items():
+                if rows: 
+                    df = pd.DataFrame(rows, columns=master_header)
+                    numeric_cols = [c for c in df.columns if c not in ["Ids"] + tag_headers]
+                    
+                    df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                    
+                    if should_group and group_cols:
+                        df_final = df.groupby(group_cols, as_index=False, dropna=False)[numeric_cols].mean()
+                    else:
+                        df_final = df
+                        
+                    df_final.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            if compiled_durations:
+                duration_headers = ["Ids"] + tag_headers + ["Time Duration"]
+                df_duration = pd.DataFrame(compiled_durations, columns=duration_headers)
+                df_duration['Time Duration'] = pd.to_numeric(df_duration['Time Duration'], errors='coerce')
                 
                 if should_group and group_cols:
-                    df_final = df.groupby(group_cols, as_index=False, dropna=False)[numeric_cols].mean()
+                    df_duration_final = df_duration.groupby(group_cols, as_index=False, dropna=False).mean()
                 else:
-                    df_final = df
+                    df_duration_final = df_duration
                     
-                df_final.to_excel(writer, sheet_name=sheet_name, index=False)
+                df_duration_final.to_excel(writer, sheet_name="Time Duration", index=False)
 
-        if compiled_durations:
-            duration_headers = ["Ids"] + tag_headers + ["Time Duration"]
-            df_duration = pd.DataFrame(compiled_durations, columns=duration_headers)
-            df_duration['Time Duration'] = pd.to_numeric(df_duration['Time Duration'], errors='coerce')
-            
-            if should_group and group_cols:
-                df_duration_final = df_duration.groupby(group_cols, as_index=False, dropna=False).mean()
-            else:
-                df_duration_final = df_duration
-                
-            df_duration_final.to_excel(writer, sheet_name="Time Duration", index=False)
+        if os.path.exists(temp_path):
+            os.replace(temp_path, output_path)
 
-    print(f"[SUCCESS] AIO Data saved to: {output_path}")
+        print(f"[SUCCESS] AIO Data saved to: {output_path}", flush=True)
+
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        raise e
 
 if __name__ == '__main__':
+    freeze_support()
     try:
         main()
-    except KeyboardInterrupt:
-        print('\nProgram terminated by user. Exiting...')
+    except (KeyboardInterrupt, SystemExit):
+        print('\n[INFO] Program stopped.', flush=True)
         sys.exit(0)

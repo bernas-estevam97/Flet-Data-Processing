@@ -5,6 +5,8 @@ import os
 # Add src directory to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import multiprocessing
+from process_manager import process_manager
 from ui.theme import AppColors, button_hover_style
 from ui.views.tutorial_view import build_tutorial_view
 from ui.views.filtering_view import build_filtering_view
@@ -113,9 +115,72 @@ def main(page: ft.Page):
         tooltip="Switch to Light Mode" if is_system_dark else "Switch to Dark Mode"
     )
 
+    # Global Force Stop Controller
+    global_stop_button = ft.IconButton(
+        icon=ft.Icons.STOP_CIRCLE_OUTLINED,
+        icon_color=AppColors.ERROR,
+        icon_size=28,
+        tooltip="No active processes",
+        disabled=True,
+        style=button_hover_style
+    )
+    running_badge = ft.Text("", size=11, color=AppColors.ERROR, weight=ft.FontWeight.BOLD, visible=False)
+
+    def update_process_status():
+        count = process_manager.get_running_count()
+        if count > 0:
+            names = process_manager.get_running_names()
+            global_stop_button.disabled = False
+            global_stop_button.icon = ft.Icons.STOP_CIRCLE
+            global_stop_button.tooltip = f"Force Stop All Running Processes ({count} active: {', '.join(names)})"
+            running_badge.value = f"{count} Active"
+            running_badge.visible = True
+        else:
+            global_stop_button.disabled = True
+            global_stop_button.icon = ft.Icons.STOP_CIRCLE_OUTLINED
+            global_stop_button.tooltip = "No active processes"
+            running_badge.value = ""
+            running_badge.visible = False
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    async def on_force_stop_all(e):
+        global_stop_button.disabled = True
+        page.update()
+        count = await process_manager.kill_all()
+        if count > 0:
+            page.snack_bar = ft.SnackBar(
+                content=ft.Text(f"⏹️ Force stopped {count} running process(es)."),
+                bgcolor=ft.Colors.AMBER_800
+            )
+            page.snack_bar.open = True
+            page.update()
+
+    global_stop_button.on_click = on_force_stop_all
+    process_manager.add_listener(update_process_status)
+
+    def handle_window_event(e):
+        if e.data == "close":
+            process_manager.kill_all_sync()
+            page.window.destroy()
+
+    page.window.on_event = handle_window_event
+
+    stop_control = ft.Column(
+        [
+            global_stop_button,
+            running_badge
+        ],
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=2
+    )
+
     sidebar_layout = ft.Column(
         [
             sidebar, 
+            ft.Container(content=stop_control, padding=ft.Padding.only(bottom=10)),
             ft.Container(content=theme_icon_button, padding=ft.Padding.only(bottom=20)) 
         ],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER
@@ -133,4 +198,5 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     ft.run(main)
