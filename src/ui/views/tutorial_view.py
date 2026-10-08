@@ -71,10 +71,22 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
             ft.Divider(color=AppColors.BORDER),
             ft.Markdown(
                 """
-1. **Define Filename Tags**: Add tag codes used in your file names and their meanings (e.g. Code: `F` ➔ Meaning: `Female`, Code: `WT` ➔ Meaning: `Wild Type`).
-2. **Select Filtered Folder**: Choose the folder containing your `_filtered.xlsx` files.
-3. **Group Trials by ID & Tags**: Automatically groups subjects by base ID and matched experimental tags.
-4. **Run**: Click **Run Descriptive AIO Statistics** to export tagged summary workbooks.
+1. **Define Filename Tags**: Each tag maps a code from your file names to an Excel **column**. The column name is what you type in "Column"; the cell value is the code itself.
+   - `WT` ➔ `Experimental Group`, `TG` ➔ `Experimental Group`
+   - `F` ➔ `Gender`, `M` ➔ `Gender`
+   - `BEAM` ➔ `Test`
+
+   Tags sharing a column name fill the same column. Columns appear in the order you add the tags.
+2. **Timepoint (automatic)**: Week parts like `44W` become a `Timepoint` column (weeks ÷ 4, so `44W` ➔ `11`). No tag needed.
+3. **Result**: `2199_1R_44W_01_BEAM_WT_F_out_processed_filtered.xlsx` becomes the row:
+
+| Ids | Experimental Group | Gender | Test | Timepoint | ...stats |
+|---|---|---|---|---|---|
+| 2199_1R | WT | F | BEAM | 11 | ... |
+
+4. **Select Filtered Folder**: Choose the folder containing your `_filtered.xlsx` files.
+5. **Group Trials by ID & Tags**: Averages trials (`_01`, `_02`, ...) that share the same Id, tags and timepoint into one row.
+6. **Run**: Click **Run Descriptive AIO Statistics** to export tagged summary workbooks.
                 """,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
             )

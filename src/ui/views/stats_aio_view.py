@@ -90,8 +90,14 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         visible=False
     )
 
-    tag_code_input = ft.TextField(label="File Tag (e.g., F)", width=150)
-    tag_meaning_input = ft.TextField(label="Column (e.g., Gender)", width=280)
+    tag_code_input = ft.TextField(
+        label="File Tag (e.g., F)", width=150,
+        tooltip="Code as it appears in the file name, e.g. F, M, WT, TG, BEAM.\nThis code is written into the Excel cell."
+    )
+    tag_meaning_input = ft.TextField(
+        label="Column (e.g., Gender)", width=280,
+        tooltip="Excel column this code goes into.\nF -> Gender and M -> Gender give one 'Gender' column with F/M values.\nWeek parts like 44W become 'Timepoint' (44W -> 11) automatically."
+    )
 
     def remove_tag(code, row_control):
         if code in active_file_tags:
@@ -279,6 +285,11 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
 
     tagging_card = create_card(
         ft.Column([
+            ft.Text(
+                "Each tag adds an Excel column: the Column name is the header, the File Tag is the cell value "
+                "(WT/TG -> Experimental Group, F/M -> Gender, BEAM -> Test). Week codes like 44W fill 'Timepoint' automatically (44W -> 11).",
+                size=12, color=AppColors.TEXT_MUTED
+            ),
             ft.Row([tag_code_input, tag_meaning_input, add_tag_btn, reset_tags_btn], spacing=10),
             tags_list_container,
             ft.Row([group_trials_switch], spacing=15),
