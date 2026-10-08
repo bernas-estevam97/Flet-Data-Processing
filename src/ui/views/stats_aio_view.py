@@ -91,7 +91,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
     )
 
     tag_code_input = ft.TextField(label="File Tag (e.g., F)", width=150)
-    tag_meaning_input = ft.TextField(label="Meaning (e.g., Female)", width=280)
+    tag_meaning_input = ft.TextField(label="Column (e.g., Gender)", width=280)
 
     def remove_tag(code, row_control):
         if code in active_file_tags:

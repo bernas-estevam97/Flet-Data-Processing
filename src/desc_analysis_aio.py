@@ -5,6 +5,7 @@ import json
 import pandas as pd
 import multiprocessing
 from multiprocessing import Pool, cpu_count, freeze_support
+import numpy as np
 
 # Reconfigure stdout to utf-8 and line buffering
 try:
@@ -51,16 +52,22 @@ def extract_data_from_excel(file_path, user_tags):
     # 1. Apply trial number removal for subject base_id
     cleaned_id_str = re.sub(r'_\d{1,2}(?=_|\.|$)', '', file_id_split, count=1)
 
-    # 2. Extract Tags Dynamically based on user input
-    found_meanings = []
+    # 2. Extract Tags Dynamically based on user input.
+    # Tag meaning is the output column name, the tag code is the cell value (e.g. F -> Gender gives Gender = F).
+    # Week parts (e.g. 44W) become Timepoint = weeks / 4 (44W -> 11).
+    found_tags = {}
+    timepoint = None
     clean_parts = []
-    
+
     user_tags_upper = {k.upper(): v for k, v in user_tags.items()}
 
     for p in cleaned_id_str.split("_"):
         p_upper = p.upper()
-        if p_upper in user_tags_upper:
-            found_meanings.append(user_tags_upper[p_upper])
+        week_match = re.fullmatch(r'(\d+)W', p_upper)
+        if week_match and timepoint is None:
+            timepoint = int(week_match.group(1)) // 4
+        elif p_upper in user_tags_upper:
+            found_tags[user_tags_upper[p_upper]] = p_upper
         else:
             clean_parts.append(p)
             
@@ -110,7 +117,8 @@ def extract_data_from_excel(file_path, user_tags):
         'file_path': file_path,
         'original_id': file_id_split,
         'pure_base_id': pure_base_id,
-        'tags_tuple': tuple(found_meanings), 
+        'tags': found_tags,
+        'timepoint': timepoint,
         'header_stats': header_stats,
         'extracted_stats': extracted_stats,
         'duration_val': duration_val
@@ -218,6 +226,8 @@ def main():
 
     # Determine dynamic tag column headers
     tag_headers = list(dict.fromkeys(user_tags.values())) if user_tags else []
+    if any(r.get('timepoint') is not None for r in results):
+        tag_headers.append("Timepoint")
 
     # --- PHASE 2: WRITE SEQUENTIALLY TO ONE EXCEL FILE ---
     compiled_stats = {sheet: [] for sheet in ["Mean", "Std", "Median", "Min", "Max", "Max_Normalized_Mean", "CV"]}
@@ -236,15 +246,10 @@ def main():
             master_header = ["Ids"] + tag_headers + base_stat_headers
 
         current_id = res['pure_base_id'] if should_group else res['original_id']
-        current_tags = list(res['tags_tuple'])
+        current_tags = {**res['tags'], "Timepoint": res['timepoint']}
 
         # Align tag values to match master tag_headers
-        tag_values_row = []
-        for th in tag_headers:
-            if th in current_tags:
-                tag_values_row.append(th)
-            else:
-                tag_values_row.append(np.nan)
+        tag_values_row = [current_tags.get(th, np.nan) for th in tag_headers]
 
         for sheet_name, row_data in res['extracted_stats'].items():
             if sheet_name in compiled_stats:
