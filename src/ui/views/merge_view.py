@@ -1,10 +1,8 @@
 import flet as ft
-import asyncio
-import sys
 import os
 from ui.theme import AppColors, create_card, button_hover_style, primary_button_style, danger_button_style
 from ui.terminal import TerminalWindow
-from process_manager import process_manager
+from process_manager import process_manager, start_task
 
 def build_merge_view(page: ft.Page) -> ft.Control:
     status_text = ft.Text("System Ready", color=AppColors.TEXT_MUTED, size=14)
@@ -193,16 +191,7 @@ def build_merge_view(page: ft.Page) -> ft.Control:
         page.update()
 
         try:
-            command = [
-                sys.executable, "-u", os.path.join("src", "merge_excel.py"), 
-                *selected_files, output_folder_path, filename
-            ]
-            
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
-            )
+            process = await start_task("merge_excel", [*selected_files, output_folder_path, filename])
             process_manager.register(TASK_ID, "File Merge", process)
 
             line_count = 0

@@ -4,7 +4,139 @@ import os
 import signal
 import subprocess
 import sys
+import threading
+import traceback
 from typing import Dict, List, Optional, Callable, Any
+
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+RUN_TASK_FLAG = "--run-task"
+
+
+def can_spawn_processes() -> bool:
+    """
+    True when sys.executable can start Python child processes: a normal interpreter,
+    or a PyInstaller exe (main.py dispatches --run-task / multiprocessing children).
+    False inside `flet build` apps, where Python is embedded in the Flutter exe.
+    """
+    return getattr(sys, "frozen", False) or os.path.basename(sys.executable).lower().startswith("python")
+
+
+def task_main(script: str) -> Callable:
+    # Static imports so PyInstaller bundles the processing scripts.
+    import ex_filtering, desc_analysis, desc_analysis_aio, merge_excel
+    return {
+        "ex_filtering": ex_filtering.main,
+        "desc_analysis": desc_analysis.main,
+        "desc_analysis_aio": desc_analysis_aio.main,
+        "merge_excel": merge_excel.main,
+    }[script]
+
+
+class TaskStopped(BaseException):
+    """Raised inside an in-process task when the user force stops it."""
+
+
+class _StdoutRouter:
+    """Sends print() output of each in-process task thread to that task's log."""
+    def __init__(self, fallback):
+        self.fallback = fallback
+        self.sinks: Dict[int, Callable[[str], int]] = {}
+
+    def write(self, s):
+        sink = self.sinks.get(threading.get_ident())
+        if sink is None and len(self.sinks) == 1:
+            # ponytail: worker-pool threads of a lone task go to it; with 2+ tasks running they go to the fallback
+            sink = next(iter(self.sinks.values()))
+        if sink is not None:
+            return sink(s)
+        return self.fallback.write(s) if self.fallback else len(s)
+
+    def flush(self):
+        if self.fallback:
+            self.fallback.flush()
+
+
+class InProcessTask:
+    """
+    Runs a script's main() in a thread, mimicking asyncio.subprocess.Process
+    (stdout.readline, wait, returncode, kill) so the views treat both the same.
+    Used when child processes can't be spawned (`flet build` apps).
+    Force stop takes effect at the task's next print (after the current file).
+    """
+    pid = None
+
+    def __init__(self, script: str, args: List[str]):
+        if not isinstance(sys.stdout, _StdoutRouter):
+            sys.stdout = sys.stderr = _StdoutRouter(sys.stdout)
+        self.returncode: Optional[int] = None
+        self.stdout = self
+        self._stopped = False
+        self._thread_id = None
+        self._buffer = ""
+        self._loop = asyncio.get_running_loop()
+        self._lines: asyncio.Queue = asyncio.Queue()
+        self._done = asyncio.Event()
+        threading.Thread(target=self._run, args=(script, args), daemon=True).start()
+
+    def _emit(self, text: str) -> None:
+        self._loop.call_soon_threadsafe(self._lines.put_nowait, text.encode("utf-8"))
+
+    def _write(self, s: str) -> int:
+        # Only the task's own thread aborts: raising in a pool worker would hang pool.map()
+        if self._stopped and threading.get_ident() == self._thread_id:
+            raise TaskStopped()
+        self._buffer += s
+        *lines, self._buffer = self._buffer.split("\n")
+        for line in lines:
+            self._emit(line + "\n")
+        return len(s)
+
+    def _run(self, script: str, args: List[str]) -> None:
+        self._thread_id = threading.get_ident()
+        sys.stdout.sinks[self._thread_id] = self._write
+        code = 1
+        try:
+            code = task_main(script)([script, *args]) or 0
+        except TaskStopped:
+            pass
+        except BaseException:
+            self._emit(traceback.format_exc())
+        finally:
+            sys.stdout.sinks.pop(self._thread_id, None)
+            if self._buffer:
+                self._emit(self._buffer)
+            self._loop.call_soon_threadsafe(self._finish, code)
+
+    def _finish(self, code: int) -> None:
+        self.returncode = code
+        self._lines.put_nowait(b"")
+        self._done.set()
+
+    async def readline(self) -> bytes:
+        return await self._lines.get()
+
+    async def wait(self) -> int:
+        await self._done.wait()
+        return self.returncode
+
+    def kill(self) -> None:
+        self._stopped = True
+
+
+async def start_task(script: str, args: List[str]):
+    """Start a processing script (e.g. "ex_filtering") and return a process-like object."""
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, RUN_TASK_FLAG, script, *args]
+    elif can_spawn_processes():
+        command = [sys.executable, "-u", os.path.join(SRC_DIR, f"{script}.py"), *args]
+    else:
+        return InProcessTask(script, args)
+    return await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT
+    )
+
 
 def kill_process_tree(pid: int) -> None:
     """

@@ -2,20 +2,21 @@ import sys
 import os
 import pandas as pd
 
-def main():
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
     # Expecting at least 4 arguments: script.py <file1> <file2> ... <out_folder> <out_filename>
-    # sys.argv[0] is the script name.
-    if len(sys.argv) < 4:
+    # argv[0] is the script name.
+    if len(argv) < 4:
         print("[ERROR] Insufficient arguments passed to script.")
         print("Expected: script.py <file1> ... <fileN> <out_folder> <out_filename>")
-        sys.exit(1)
+        return 1
     
     # Extract outputs from the end of the argument list
-    out_filename = sys.argv[-1]
-    out_folder = sys.argv[-2]
+    out_filename = argv[-1]
+    out_folder = argv[-2]
     
     # Extract all input files (everything between the script name and the output folder)
-    input_files = sys.argv[1:-2]
+    input_files = argv[1:-2]
 
     # Ensure the filename ends with .xlsx
     if not out_filename.endswith('.xlsx'):
@@ -35,7 +36,7 @@ def main():
             all_file_dicts.append(file_dict)
         except Exception as e:
             print(f"[ERROR] Failed to read {os.path.basename(file_path)}. {e}")
-            sys.exit(1)
+            return 1
 
     # 2. Get a unique set of all sheet names across ALL provided files
     all_sheets = set()
@@ -62,7 +63,7 @@ def main():
         print(f"{output_path}")
     except Exception as e:
         print(f"[ERROR] Failed to save merged file. {e}")
-        sys.exit(1)
+        return 1
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

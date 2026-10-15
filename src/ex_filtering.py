@@ -9,6 +9,7 @@ import numpy as np
 import multiprocessing
 import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from process_manager import can_spawn_processes
 
 # Reconfigure stdout to utf-8 and line buffering
 try:
@@ -242,15 +243,16 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
 
 
 # --- MAIN EXECUTION ---
-def main():
-    if len(sys.argv) > 1:
-        folder_input = sys.argv[1]
-        choice = sys.argv[2] if len(sys.argv) > 2 else "0"
-        animal_choice = sys.argv[3] if len(sys.argv) > 3 else "0"
-        experiment = sys.argv[4] if len(sys.argv) > 4 else "groundwalk"
-        old_or_new = sys.argv[5] if len(sys.argv) > 5 else "old"
-        output_folder = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6].strip() else folder_input
-        height_cutoff = sys.argv[7] if len(sys.argv) > 7 else "no"
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    if len(argv) > 1:
+        folder_input = argv[1]
+        choice = argv[2] if len(argv) > 2 else "0"
+        animal_choice = argv[3] if len(argv) > 3 else "0"
+        experiment = argv[4] if len(argv) > 4 else "groundwalk"
+        old_or_new = argv[5] if len(argv) > 5 else "old"
+        output_folder = argv[6] if len(argv) > 6 and argv[6].strip() else folder_input
+        height_cutoff = argv[7] if len(argv) > 7 else "no"
 
         os.makedirs(output_folder, exist_ok=True)
 
@@ -261,7 +263,7 @@ def main():
 
         if not os.path.isdir(folder_input):
             print(f"[ERROR] The provided input path is not a valid directory: {folder_input}")
-            sys.exit(1)
+            return 1
 
     else:
         # Interactive Mode
@@ -344,7 +346,8 @@ def main():
         pool_broken = False
         executor = None
         try:
-            executor = ProcessPoolExecutor(max_workers=num_processes)
+            pool_class = ProcessPoolExecutor if can_spawn_processes() else ThreadPoolExecutor
+            executor = pool_class(max_workers=num_processes)
             futures = [
                 executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
                 for item in indexed_files
@@ -418,6 +421,6 @@ def main():
 if __name__ == '__main__':
     multiprocessing.freeze_support()
     try:
-        main()
-    except (KeyboardInterrupt, SystemExit):
+        sys.exit(main())
+    except KeyboardInterrupt:
         print("\n[INFO] Program stopped.", flush=True)

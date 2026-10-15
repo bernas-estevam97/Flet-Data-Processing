@@ -4,6 +4,8 @@ import re
 import pandas as pd
 import multiprocessing
 from multiprocessing import Pool, cpu_count, freeze_support
+from multiprocessing.pool import ThreadPool
+from process_manager import can_spawn_processes
 
 # Reconfigure stdout to utf-8 and line buffering
 try:
@@ -98,17 +100,18 @@ def extract_data_from_excel(file_path):
         'duration_val': duration_val
     }
 
-def main():
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
     should_group = False
     
-    # --- 1. Catch variables from Flet via sys.argv ---
-    if len(sys.argv) > 1:
-        folder_input = sys.argv[1]
-        folder_output = sys.argv[2].strip() if len(sys.argv) > 2 and sys.argv[2].strip() else folder_input
-        experiment_name = sys.argv[3].strip() if len(sys.argv) > 3 else "experiment"
+    # --- 1. Catch variables from Flet via argv ---
+    if len(argv) > 1:
+        folder_input = argv[1]
+        folder_output = argv[2].strip() if len(argv) > 2 and argv[2].strip() else folder_input
+        experiment_name = argv[3].strip() if len(argv) > 3 else "experiment"
         
-        if len(sys.argv) > 4:
-            should_group = str(sys.argv[4]).strip().lower() in ['y', 'yes', 'true', '1']
+        if len(argv) > 4:
+            should_group = str(argv[4]).strip().lower() in ['y', 'yes', 'true', '1']
 
         print(f"[START] Running Data Compilation...")
         print(f"[PATH] Input Folder: {folder_input}")
@@ -118,7 +121,7 @@ def main():
         
         if not os.path.isdir(folder_input):
             print(f"[ERROR] The provided input path is not a valid directory: {folder_input}")
-            sys.exit(1)
+            return 1
             
         os.makedirs(folder_output, exist_ok=True)
 
@@ -161,14 +164,9 @@ def main():
     reserved_cores = 2 if total_cores > 4 else 1
     num_cores = max(1, total_cores - reserved_cores)
     
-    pool = None
-    try:
-        pool = Pool(processes=num_cores)
+    pool_class = Pool if can_spawn_processes() else ThreadPool
+    with pool_class(processes=num_cores) as pool:
         results = pool.map(extract_data_from_excel, file_paths)
-    finally:
-        if pool is not None:
-            pool.close()
-            pool.join()
 
     if should_group:
         print("Data extraction complete! Grouping trials and calculating means...\n", flush=True)
@@ -246,7 +244,7 @@ def main():
 if __name__ == '__main__':
     freeze_support()
     try:
-        main()
-    except (KeyboardInterrupt, SystemExit):
+        sys.exit(main())
+    except KeyboardInterrupt:
         print('\n[INFO] Program stopped.', flush=True)
         sys.exit(0)

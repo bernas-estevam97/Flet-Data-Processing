@@ -5,6 +5,8 @@ import json
 import pandas as pd
 import multiprocessing
 from multiprocessing import Pool, cpu_count, freeze_support
+from multiprocessing.pool import ThreadPool
+from process_manager import can_spawn_processes
 import numpy as np
 
 # Reconfigure stdout to utf-8 and line buffering
@@ -128,24 +130,25 @@ def worker_wrapper(args):
     """Helper wrapper for pool.map to pass multiple arguments."""
     return extract_data_from_excel(*args)
 
-def main():
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
     should_group = False
     user_tags = {}
 
-    # --- 1. Catch variables from Flet via sys.argv ---
-    if len(sys.argv) > 1:
-        folder_input = sys.argv[1]
-        folder_output = sys.argv[2].strip() if len(sys.argv) > 2 and sys.argv[2].strip() else folder_input
-        experiment_name = sys.argv[3].strip() if len(sys.argv) > 3 else "experiment"
+    # --- 1. Catch variables from Flet via argv ---
+    if len(argv) > 1:
+        folder_input = argv[1]
+        folder_output = argv[2].strip() if len(argv) > 2 and argv[2].strip() else folder_input
+        experiment_name = argv[3].strip() if len(argv) > 3 else "experiment"
         
-        if len(sys.argv) > 4:
+        if len(argv) > 4:
             try:
-                user_tags = json.loads(sys.argv[4])
+                user_tags = json.loads(argv[4])
             except Exception:
                 user_tags = {}
 
-        if len(sys.argv) > 5:
-            should_group = str(sys.argv[5]).strip().lower() in ['y', 'yes', 'true', '1']
+        if len(argv) > 5:
+            should_group = str(argv[5]).strip().lower() in ['y', 'yes', 'true', '1']
 
         print(f"[START] Running AIO Data Compilation...")
         print(f"[PATH] Input Folder: {folder_input}")
@@ -155,7 +158,7 @@ def main():
 
         if not os.path.isdir(folder_input):
             print(f"[ERROR] The provided input path is not a valid directory: {folder_input}")
-            sys.exit(1)
+            return 1
             
         os.makedirs(folder_output, exist_ok=True)
 
@@ -210,14 +213,9 @@ def main():
     reserved_cores = 2 if total_cores > 4 else 1
     num_cores = max(1, total_cores - reserved_cores)
     
-    pool = None
-    try:
-        pool = Pool(processes=num_cores)
+    pool_class = Pool if can_spawn_processes() else ThreadPool
+    with pool_class(processes=num_cores) as pool:
         results = pool.map(worker_wrapper, tasks)
-    finally:
-        if pool is not None:
-            pool.close()
-            pool.join()
 
     if should_group:
         print("Data extraction complete! Grouping trials by Subject ID and Identified Tags...\n", flush=True)
@@ -308,7 +306,7 @@ def main():
 if __name__ == '__main__':
     freeze_support()
     try:
-        main()
-    except (KeyboardInterrupt, SystemExit):
+        sys.exit(main())
+    except KeyboardInterrupt:
         print('\n[INFO] Program stopped.', flush=True)
         sys.exit(0)
