@@ -1,5 +1,5 @@
 import flet as ft
-from ui.theme import AppColors, create_card
+from ui.theme import AppColors, create_card, button_hover_style
 
 def build_tutorial_view(page: ft.Page) -> ft.Control:
     header_section = ft.Column([
@@ -31,7 +31,8 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
    - **Experiment Type**: Select Groundwalk, Gridwalk, Beamwalk, or Swimming.
    - **Camera Settings**: Select Old vs New calibration settings.
    - **Hind Paw Height Cutoff**: Enable to truncate kinematics past hind paw touch threshold.
-4. **Run**: Click **Run Data Filtering**. Multi-core processing executes in the background with live log feedback. Already filtered files will automatically skip to save time.
+   - **Keep Positions Sheet**: Copies the raw `Positions (used)` sheet into each filtered file. Turn off for about 2x faster filtering when you don't need the positions.
+4. **Run**: Click **Run Data Filtering**. Files are processed in the background with live log feedback (in parallel or one at a time, see **Sidebar Controls** below). Already filtered files will automatically skip to save time.
                 """,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
             )
@@ -112,6 +113,28 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
         ], spacing=10)
     )
 
+    sidebar_controls_card = create_card(
+        ft.Column([
+            ft.ListTile(
+                leading=ft.Icon(ft.Icons.TUNE, size=28, color=AppColors.PRIMARY),
+                title=ft.Text("Sidebar Controls", weight=ft.FontWeight.BOLD, size=18, color=AppColors.TEXT_MAIN),
+                subtitle=ft.Text("Processing speed, stopping tasks and theme.", color=AppColors.TEXT_MUTED)
+            ),
+            ft.Divider(color=AppColors.BORDER),
+            ft.Markdown(
+                """
+- **Parallel / Sequential switch**:
+   - **Parallel (ON)**: Processes several files at once using most CPU cores. Much faster, but the computer may feel slow while a task runs.
+   - **Sequential (OFF)**: Processes one file at a time. Slower, but light on low-end PCs or while you keep working.
+   - The setting applies to the next task you start, not to a task already running.
+- **Force Stop**: The red stop button becomes active while a task runs. Click it to stop all running tasks at once. The badge below it shows how many tasks are active.
+- **Theme**: Switches between light and dark mode.
+                """,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+            )
+        ], spacing=10)
+    )
+
     admin_support_card = create_card(
         ft.Column([
             ft.ListTile(
@@ -121,8 +144,15 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
             ),
             ft.Divider(color=AppColors.BORDER),
             ft.Text(
-                "If you have any questions about operating the data pipeline, need custom subtraction/offset calibration parameters added, or encounter issues processing your experimental files, please contact your system administrator for direct assistance.",
+                "If you have any questions about operating the data pipeline, need custom subtraction/offset calibration parameters added, or encounter issues processing your experimental files, please contact me through my website for direct assistance.",
                 color=AppColors.TEXT_MUTED, size=14
+            ),
+            ft.OutlinedButton(
+                "bernas-estevam97.github.io",
+                icon=ft.Icons.OPEN_IN_NEW,
+                url="https://bernas-estevam97.github.io/",
+                tooltip="Open in your browser",
+                style=button_hover_style
             )
         ], spacing=10)
     )
@@ -134,5 +164,6 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
         step2_card,
         step3_card,
         step4_card,
+        sidebar_controls_card,
         admin_support_card
     ], spacing=15, padding=20)
