@@ -117,6 +117,13 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         tooltip="Truncate kinematics after hind paw threshold timestamp"
     )
 
+    keep_positions_switch = ft.Switch(
+        label="Keep Positions Sheet",
+        value=True,
+        active_color=AppColors.PRIMARY,
+        tooltip="Copy the raw 'Positions (used)' sheet into each filtered file.\nTurn off for about 2x faster filtering when you don't need the positions."
+    )
+
     TASK_ID = "filtering"
 
     terminal = TerminalWindow(page)
@@ -159,6 +166,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         experiment = experiment_dropdown.value
         camera = camera_dropdown.value
         height_cutoff = "yes" if height_cutoff_switch.value else "no"
+        keep_positions = "yes" if keep_positions_switch.value else "no"
 
         status_text.value = "Processing... Please wait."
         status_text.color = AppColors.WARNING
@@ -172,7 +180,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         page.update()
 
         try:
-            process = await start_task("ex_filtering", [input_folder_path, choice, animal, experiment, camera, out_path, height_cutoff])
+            process = await start_task("ex_filtering", [input_folder_path, choice, animal, experiment, camera, out_path, height_cutoff, keep_positions])
             process_manager.register(TASK_ID, "Data Filtering", process)
 
             line_count = 0
@@ -235,7 +243,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         ft.Column([
             ft.Row([cutoff_dropdown, animal_dropdown], spacing=15),
             ft.Row([experiment_dropdown, camera_dropdown], spacing=15),
-            ft.Row([height_cutoff_switch], spacing=15),
+            ft.Row([height_cutoff_switch, keep_positions_switch], spacing=15),
         ], spacing=15),
         title="Experiment Parameters",
         icon=ft.Icons.TUNE

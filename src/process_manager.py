@@ -31,6 +31,9 @@ def worker_count(n_tasks: int) -> int:
     """
     if os.environ.get(SEQUENTIAL_ENV) == "1":
         return 1
+    if not can_spawn_processes():
+        print("[INFO] This app build can't start worker processes: parallel mode runs files on threads, "
+              "which Python runs almost one at a time. Use the 'flet pack' build for full parallel speed.", flush=True)
     cores = os.cpu_count() or 4
     return max(1, min(n_tasks, cores - (2 if cores > 4 else 1)))
 

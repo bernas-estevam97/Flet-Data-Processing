@@ -6,6 +6,7 @@ import datetime
 import warnings
 import pandas as pd
 import numpy as np
+import rustpy_xlsxwriter
 import multiprocessing
 import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -62,8 +63,13 @@ OFFSET_MAP = {
     ("0", "swimming", "new"): 0.036,
 }
 
+def records(df):
+    """Rows as dicts for rustpy_xlsxwriter (~15x faster than DataFrame.to_excel). NaN cells stay empty."""
+    return df.astype(object).where(df.notna(), None).to_dict('records')
+
+
 # --- WORKER FUNCTION ---
-def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff="no"):
+def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff="no", keep_positions="yes"):
     index, file_path, total_files = file_info_tuple
     file_name = os.path.basename(file_path)
     captured_warnings = []
@@ -216,12 +222,11 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             duration_df = pd.DataFrame([row_data], columns=df_kin_filtered.columns)
 
             temp_output_file = os.path.join(output_folder, f"~${os.path.basename(output_file)}")
-            with pd.ExcelWriter(temp_output_file, engine='xlsxwriter') as writer:
-                df_raw.to_excel(writer, sheet_name='Positions (used)', index=False)
-                df_kin_filtered.to_excel(writer, sheet_name='Kinematics', index=False)
-                start_row = len(df_kin_filtered) + 2
-                duration_df.to_excel(writer, sheet_name='Kinematics', startrow=start_row, index=False, header=False)
-                stats_output.to_excel(writer, sheet_name='Kinematics', startrow=start_row + 1, index=False, header=False)
+            # Kinematics sheet: filtered rows, one empty row, then duration and stats rows
+            kin_records = records(df_kin_filtered) + [dict.fromkeys(df_kin_filtered.columns)] + records(duration_df) + records(stats_output)
+            sheets = [('Positions (used)', records(df_raw))] if str(keep_positions).lower() in ["yes", "true", "1"] else []
+            sheets.append(('Kinematics', kin_records))
+            rustpy_xlsxwriter.write_worksheets(sheets, temp_output_file, bold_headers=True)
 
             if os.path.exists(temp_output_file):
                 os.replace(temp_output_file, output_file)
@@ -253,13 +258,14 @@ def main(argv=None):
         old_or_new = argv[5] if len(argv) > 5 else "old"
         output_folder = argv[6] if len(argv) > 6 and argv[6].strip() else folder_input
         height_cutoff = argv[7] if len(argv) > 7 else "no"
+        keep_positions = argv[8] if len(argv) > 8 else "yes"
 
         os.makedirs(output_folder, exist_ok=True)
 
         print(f"[START] Running excel filtering...")
         print(f"[PATH] Input Folder: {folder_input}")
         print(f"[PATH] Output Folder: {output_folder}")
-        print(f"[CONFIG] Settings: Cutoff({choice}) | Animal({animal_choice}) | {experiment} | {old_or_new} | Height Cutoff: {height_cutoff}")
+        print(f"[CONFIG] Settings: Cutoff({choice}) | Animal({animal_choice}) | {experiment} | {old_or_new} | Height Cutoff: {height_cutoff} | Keep Positions: {keep_positions}")
 
         if not os.path.isdir(folder_input):
             print(f"[ERROR] The provided input path is not a valid directory: {folder_input}")
@@ -293,6 +299,7 @@ def main(argv=None):
         experiment = get_valid_input("Experiment type: ", ["groundwalk", "gridwalk", "beamwalk", "swimming"], "Invalid experiment.")
         old_or_new = get_valid_input("Old or New settings? ", ["old", "new"], "Choose 'old' or 'new'.")
         height_cutoff = get_valid_input("Apply hind paw height cutoff? (yes/no): ", ["yes", "no"], "Choose 'yes' or 'no'.")
+        keep_positions = get_valid_input("Keep the 'Positions (used)' sheet in filtered files? (yes/no): ", ["yes", "no"], "Choose 'yes' or 'no'.")
         output_folder = folder_output
 
     file_paths = [os.path.join(folder_input, f) for f in os.listdir(folder_input) 
@@ -309,7 +316,7 @@ def main(argv=None):
     num_processes = worker_count(total_files)
     
     log_file_path = os.path.join(output_folder, "error_log.txt")
-    print(f"\n[INFO] Checking {total_files} files using {num_processes} processes... Logging to: {log_file_path}", flush=True)
+    print(f"\n[INFO] Checking {total_files} files using {num_processes} worker(s){' (sequential mode)' if num_processes == 1 else ''}... Logging to: {log_file_path}", flush=True)
     
     start_time = time.perf_counter()
     failed_files, files_with_warnings, skipped_files = [], [], []
@@ -338,7 +345,7 @@ def main(argv=None):
 
     with open(log_file_path, 'w', encoding='utf-8') as log_file:
         log_file.write(f"--- Processing Started at {datetime.datetime.now()} ---\n")
-        log_file.write(f"Parameters: Choice={choice}, Animal={animal_choice}, Exp={experiment}, Set={old_or_new}, HeightCutoff={height_cutoff}\n")
+        log_file.write(f"Parameters: Choice={choice}, Animal={animal_choice}, Exp={experiment}, Set={old_or_new}, HeightCutoff={height_cutoff}, KeepPositions={keep_positions}\n")
         log_file.write("-" * 50 + "\n")
 
         pool_broken = False
@@ -348,7 +355,7 @@ def main(argv=None):
             pool_class = ProcessPoolExecutor if can_spawn_processes() and num_processes > 1 else ThreadPoolExecutor
             executor = pool_class(max_workers=num_processes)
             futures = [
-                executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
+                executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff, keep_positions)
                 for item in indexed_files
             ]
             
@@ -387,7 +394,7 @@ def main(argv=None):
                 if os.path.exists(out_file) or fname in skipped_files or any(f[0] == fname for f in failed_files) or fname in [f for f in files_with_warnings]:
                     continue
                 try:
-                    res = filter_excel_by_column(item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)
+                    res = filter_excel_by_column(item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff, keep_positions)
                     handle_result_tuple(res, log_file)
                 except Exception as exc:
                     error_str = str(exc) or exc.__class__.__name__
