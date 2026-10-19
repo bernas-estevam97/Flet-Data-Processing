@@ -21,6 +21,20 @@ def can_spawn_processes() -> bool:
     return getattr(sys, "frozen", False) or os.path.basename(sys.executable).lower().startswith("python")
 
 
+SEQUENTIAL_ENV = "MOTORATER_SEQUENTIAL"
+
+
+def worker_count(n_tasks: int) -> int:
+    """
+    Workers for a file pool: 1 in sequential mode (set from the UI through an env var,
+    so child processes inherit it), else the free cores, never more than there are files.
+    """
+    if os.environ.get(SEQUENTIAL_ENV) == "1":
+        return 1
+    cores = os.cpu_count() or 4
+    return max(1, min(n_tasks, cores - (2 if cores > 4 else 1)))
+
+
 def task_main(script: str) -> Callable:
     # Static imports so PyInstaller bundles the processing scripts.
     import ex_filtering, desc_analysis, desc_analysis_aio, merge_excel
@@ -131,10 +145,17 @@ async def start_task(script: str, args: List[str]):
         command = [sys.executable, "-u", os.path.join(SRC_DIR, f"{script}.py"), *args]
     else:
         return InProcessTask(script, args)
+    # Windows: below-normal priority (inherited by pool workers) keeps the PC responsive while a task runs.
+    # POSIX: own process group, so kill_process_tree's killpg hits the task's tree and not the GUI.
+    if sys.platform == "win32":
+        platform_kwargs = {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS}
+    else:
+        platform_kwargs = {"start_new_session": True}
     return await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT
+        stderr=asyncio.subprocess.STDOUT,
+        **platform_kwargs
     )
 
 

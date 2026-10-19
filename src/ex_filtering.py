@@ -9,7 +9,7 @@ import numpy as np
 import multiprocessing
 import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from process_manager import can_spawn_processes
+from process_manager import can_spawn_processes, worker_count
 
 # Reconfigure stdout to utf-8 and line buffering
 try:
@@ -306,9 +306,7 @@ def main(argv=None):
     indexed_files = [(i, f, total_files) for i, f in enumerate(file_paths)]
 
     # Dynamic CPU Core Allocation - leaving cores for OS & UI responsiveness
-    total_cores = os.cpu_count() or 4
-    reserved_cores = 2 if total_cores > 4 else 1
-    num_processes = max(1, total_cores - reserved_cores)
+    num_processes = worker_count(total_files)
     
     log_file_path = os.path.join(output_folder, "error_log.txt")
     print(f"\n[INFO] Checking {total_files} files using {num_processes} processes... Logging to: {log_file_path}", flush=True)
@@ -346,7 +344,8 @@ def main(argv=None):
         pool_broken = False
         executor = None
         try:
-            pool_class = ProcessPoolExecutor if can_spawn_processes() else ThreadPoolExecutor
+            # A single worker runs in a thread: no point paying for a new process
+            pool_class = ProcessPoolExecutor if can_spawn_processes() and num_processes > 1 else ThreadPoolExecutor
             executor = pool_class(max_workers=num_processes)
             futures = [
                 executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff)

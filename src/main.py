@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import multiprocessing
-from process_manager import process_manager, task_main, RUN_TASK_FLAG
+from process_manager import process_manager, task_main, RUN_TASK_FLAG, SEQUENTIAL_ENV
 from ui.theme import AppColors, button_hover_style
 from ui.views.tutorial_view import build_tutorial_view
 from ui.views.filtering_view import build_filtering_view
@@ -168,6 +168,29 @@ def main(page: ft.Page):
 
     page.window.on_event = handle_window_event
 
+    # Parallel / sequential toggle, read by worker_count() in every processing script
+    def toggle_parallel(e):
+        os.environ[SEQUENTIAL_ENV] = "0" if parallel_switch.value else "1"
+        parallel_label.value = "Parallel" if parallel_switch.value else "Sequential"
+        page.update()
+
+    parallel_switch = ft.Switch(
+        value=True,
+        on_change=toggle_parallel,
+        tooltip=(
+            "ON: processes several files at once using most CPU cores. Much faster, "
+            "but the computer may feel slow while a task runs.\n"
+            "OFF: one file at a time. Slower, but light on low-end PCs or while you keep working.\n"
+            "Applies to the next task you start."
+        )
+    )
+    parallel_label = ft.Text("Parallel", size=11)
+    parallel_control = ft.Column(
+        [parallel_switch, parallel_label],
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=2
+    )
+
     stop_control = ft.Column(
         [
             global_stop_button,
@@ -179,7 +202,8 @@ def main(page: ft.Page):
 
     sidebar_layout = ft.Column(
         [
-            sidebar, 
+            sidebar,
+            ft.Container(content=parallel_control, padding=ft.Padding.only(bottom=10)),
             ft.Container(content=stop_control, padding=ft.Padding.only(bottom=10)),
             ft.Container(content=theme_icon_button, padding=ft.Padding.only(bottom=20)) 
         ],

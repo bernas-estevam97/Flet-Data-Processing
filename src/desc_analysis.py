@@ -3,9 +3,9 @@ import sys
 import re
 import pandas as pd
 import multiprocessing
-from multiprocessing import Pool, cpu_count, freeze_support
+from multiprocessing import Pool, freeze_support
 from multiprocessing.pool import ThreadPool
-from process_manager import can_spawn_processes
+from process_manager import can_spawn_processes, worker_count
 
 # Reconfigure stdout to utf-8 and line buffering
 try:
@@ -157,14 +157,14 @@ def main(argv=None):
         return
     
     total_files = len(file_paths)
-    print(f"[INFO] Found {total_files} files. Starting parallel data extraction...")
+    print(f"[INFO] Found {total_files} files. Starting data extraction...")
 
     # --- PHASE 1: READ MULTIPLE FILES IN PARALLEL ---
-    total_cores = cpu_count() or 4
-    reserved_cores = 2 if total_cores > 4 else 1
-    num_cores = max(1, total_cores - reserved_cores)
-    
-    pool_class = Pool if can_spawn_processes() else ThreadPool
+    num_cores = worker_count(total_files)
+    print(f"[INFO] Using {num_cores} worker(s){' (sequential mode)' if num_cores == 1 else ''}.", flush=True)
+
+    # A single worker runs in a thread: no point paying for a new process
+    pool_class = Pool if can_spawn_processes() and num_cores > 1 else ThreadPool
     with pool_class(processes=num_cores) as pool:
         results = pool.map(extract_data_from_excel, file_paths)
 
