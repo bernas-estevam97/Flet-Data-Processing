@@ -16,7 +16,7 @@ The app has four tools, available from the sidebar:
 |---|---|---|
 | **1. Data Filtering** | Folder of raw MotoRater `.xlsx` files | One `*_filtered.xlsx` per file: trimmed, calibrated, with per-file statistics |
 | **2. Statistics** | Folder of `*_filtered.xlsx` files | One summary workbook (one sheet per statistic, one row per subject or trial) |
-| **3. Statistics – AIO** | Folder of `*_filtered.xlsx` files plus your filename tags | Same summary, with extra columns (group, gender, test, timepoint) parsed from file names |
+| **3. Statistics – AIO** | Folder of `*_filtered.xlsx` files, your filename tags and your timepoint schedule | Same summary, with extra columns (group, gender, test, timepoint) parsed from file names |
 | **4. Merge Data** | Two or more Excel files with the same sheets | A single workbook where each sheet is stacked from all files |
 
 A built-in **Tutorial** page explains every option in detail.
@@ -38,13 +38,22 @@ This tool collects the statistics from every filtered file into one Excel workbo
 
 ### 3. Statistics – AIO (All-In-One)
 
-This tool does the same as Statistics. It also reads **tags** from the file names and turns them into columns. You define what each tag means. For example:
+This tool does the same as Statistics. It also reads **tags** from the file names and turns them into columns. Set them up in two steps:
 
-- `WT`, `TG` → *Experimental Group*
-- `F`, `M` → *Gender*
-- `BEAM` → *Test*
+1. **Create column headers** for the new Excel file, for example *Experimental Group*, *Gender*, *Test*.
+2. **Add the tags present in your data files** and pick the column each tag goes into from a dropdown:
+   - `WT`, `TG` → *Experimental Group*
+   - `F`, `M` → *Gender*
+   - `BEAM` → *Test*
 
-Week codes such as `44W` automatically become a **Timepoint** column (weeks ÷ 4, so `44W` → `11`).
+The tag itself becomes the cell value. Columns appear in the order you created them.
+
+Week codes such as `44W` automatically become a **Timepoint** column. In **Timepoint Schedule**, set the week of your first experiment and the number of weeks between experiments to match your protocol:
+
+- Default (start `4W`, every `4W`): `4W` → `1`, `8W` → `2`, `44W` → `11`
+- Start `2W`, every `3W`: `2W` → `1`, `5W` → `2`, `8W` → `3`
+
+Weeks that are not on the schedule show a warning in the terminal.
 
 ```
 2199_1R_44W_01_BEAM_WT_F_out_processed_filtered.xlsx

@@ -1,6 +1,6 @@
 # MotoRater Data Processing App - Project State & Cold Memory Checkpoint
 
-> **Date Updated**: October 19, 2026
+> **Date Updated**: November 4, 2026
 > **Status**: Fully operational
 > **Environment**: Python 3.10+ managed by `uv` (`.venv`, `uv.lock`)
 > **Framework**: Flet 1.0.4 (Desktop UI) | Pandas | rustpy-xlsxwriter
@@ -27,7 +27,7 @@ Flet-Data-Processing/
 │   ├── process_manager.py      # Task launching (subprocess or in-process thread), force stop, worker_count()
 │   ├── ex_filtering.py         # Raw data filtering (parallel pool, height cutoff, optional Positions sheet)
 │   ├── desc_analysis.py        # Descriptive statistics (subject trial grouping, metric calculations)
-│   ├── desc_analysis_aio.py    # Tagged statistics (filename tag parser, Timepoint from week tags)
+│   ├── desc_analysis_aio.py    # Tagged statistics (filename tag parser, Timepoint from week tags via configurable start week + interval)
 │   ├── merge_excel.py          # Vertical merge of identically structured Excel files
 │   ├── assets/                 # icon.ico, icon.png, splash_android.png (+ *_old / *_default variants)
 │   ├── ui/
@@ -37,7 +37,7 @@ Flet-Data-Processing/
 │   │       ├── tutorial_view.py  # In-app guide (Steps 1-4, Sidebar Controls, help card with website link)
 │   │       ├── filtering_view.py # Filtering UI (parameter dropdowns, Height Cutoff + Keep Positions switches)
 │   │       ├── stats_view.py     # Descriptive statistics UI (grouping switch)
-│   │       ├── stats_aio_view.py # AIO statistics UI (tag manager)
+│   │       ├── stats_aio_view.py # AIO statistics UI (column headers, tag dropdown, timepoint schedule)
 │   │       └── merge_view.py     # Excel merger UI (selected files list with per-file remove)
 │   └── legacy_v1/              # Archived monolithic V1 app, kept for reference
 ```
@@ -88,8 +88,11 @@ Flet-Data-Processing/
 - Already filtered files (`_filtered.xlsx`) are skipped by filtering.
 
 ### G. AIO Tagging (`desc_analysis_aio.py`)
-- Each user tag maps a filename code to a column (e.g. `WT` ➔ `Experimental Group`, `F` ➔ `Gender`).
-- Week parts like `44W` become a `Timepoint` column (weeks / 4).
+- UI flow (`stats_aio_view.py`): user first creates column headers (chips, deletable; "Ids"/"Timepoint" reserved), then adds tags found in file names and assigns each to a header via dropdown. Deleting a header deletes its tags.
+- Each tag maps a filename code to a column (e.g. `WT` ➔ `Experimental Group`, `F` ➔ `Gender`). Tags are sent as JSON ordered by header creation order, which sets output column order.
+- Week parts like `44W` become a `Timepoint` column via `week_to_timepoint(weeks, start_week, interval)`: `(weeks - start_week) // interval + 1`. Defaults start 4W, every 4W (`44W` ➔ `11`, same as the old weeks / 4). Off-schedule weeks print a `[WARNING]`.
+- Schedule comes from the "Timepoint Schedule" card (first week, weeks between timepoints) with a live mapping preview.
+- CLI args: `input output experiment tags_json group(y/n) start_week interval` (last two optional, default 4 4). `python desc_analysis_aio.py --selftest` checks the timepoint mapping.
 - Optional grouping averages trials sharing Id, tags and timepoint.
 
 ### H. Tutorial Page
