@@ -18,7 +18,16 @@ try:
 except Exception:
     pass
 
-def extract_data_from_excel(file_path, user_tags):
+def week_to_timepoint(weeks, start_week=4, interval=4):
+    """Map a week number to a timepoint: start_week -> 1, start_week + interval -> 2, ...
+
+    Returns (timepoint, aligned). aligned is False when the week is not on the protocol schedule.
+    """
+    offset = weeks - start_week
+    return offset // interval + 1, offset % interval == 0
+
+
+def extract_data_from_excel(file_path, user_tags, start_week=4, interval=4):
     """
     WORKER FUNCTION (Runs in parallel)
     Opens a single Excel file, extracts rows, and parses tags dynamically.
@@ -56,7 +65,7 @@ def extract_data_from_excel(file_path, user_tags):
 
     # 2. Extract Tags Dynamically based on user input.
     # Tag meaning is the output column name, the tag code is the cell value (e.g. F -> Gender gives Gender = F).
-    # Week parts (e.g. 44W) become Timepoint = weeks / 4 (44W -> 11).
+    # Week parts (e.g. 44W) become Timepoint via the protocol schedule (default start 4W, every 4W: 44W -> 11).
     found_tags = {}
     timepoint = None
     clean_parts = []
@@ -67,7 +76,10 @@ def extract_data_from_excel(file_path, user_tags):
         p_upper = p.upper()
         week_match = re.fullmatch(r'(\d+)W', p_upper)
         if week_match and timepoint is None:
-            timepoint = int(week_match.group(1)) // 4
+            weeks = int(week_match.group(1))
+            timepoint, aligned = week_to_timepoint(weeks, start_week, interval)
+            if not aligned:
+                print(f"[WARNING] {file_id}: {weeks}W is not on the schedule (start {start_week}W, every {interval}W). Using Timepoint {timepoint}.", flush=True)
         elif p_upper in user_tags_upper:
             found_tags[user_tags_upper[p_upper]] = p_upper
         else:
@@ -134,6 +146,7 @@ def main(argv=None):
     argv = sys.argv if argv is None else argv
     should_group = False
     user_tags = {}
+    start_week, interval = 4, 4
 
     # --- 1. Catch variables from Flet via argv ---
     if len(argv) > 1:
@@ -150,11 +163,21 @@ def main(argv=None):
         if len(argv) > 5:
             should_group = str(argv[5]).strip().lower() in ['y', 'yes', 'true', '1']
 
+        try:
+            if len(argv) > 6 and argv[6].strip():
+                start_week = int(argv[6])
+            if len(argv) > 7 and argv[7].strip():
+                interval = int(argv[7])
+        except ValueError:
+            print("[ERROR] First timepoint and interval must be whole numbers of weeks.")
+            return 1
+
         print(f"[START] Running AIO Data Compilation...")
         print(f"[PATH] Input Folder: {folder_input}")
         print(f"[PATH] Output Folder: {folder_output}")
         print(f"[CONFIG] Tags Registered: {user_tags}")
-        print(f"[CONFIG] Trial Grouping: {'Enabled (Group Subject ID & Tags)' if should_group else 'Disabled (Keep All Trials)'}\n")
+        print(f"[CONFIG] Trial Grouping: {'Enabled (Group Subject ID & Tags)' if should_group else 'Disabled (Keep All Trials)'}")
+        print(f"[CONFIG] Timepoints: start {start_week}W, every {interval}W\n")
 
         if not os.path.isdir(folder_input):
             print(f"[ERROR] The provided input path is not a valid directory: {folder_input}")
@@ -193,6 +216,18 @@ def main(argv=None):
         group_choice = input("Do you want to group the means according to Detected IDs & Tags? (y/n): ").strip().lower()
         should_group = group_choice in ['y', 'yes']
 
+        print("\n--- TIMEPOINT CONFIGURATION ---")
+        try:
+            start_week = int(input("First timepoint week (default 4): ").strip() or 4)
+            interval = int(input("Weeks between timepoints (default 4): ").strip() or 4)
+        except ValueError:
+            print('[ERROR] Weeks must be whole numbers.')
+            return
+
+    if interval < 1:
+        print("[ERROR] Interval between timepoints must be at least 1 week.")
+        return 1
+
     # --- 3. GET FILES ---
     file_paths = sorted([
         os.path.join(folder_input, p) for p in os.listdir(folder_input) 
@@ -206,7 +241,7 @@ def main(argv=None):
     print(f"[INFO] Found {total_files} files. Starting AIO data extraction...")
 
     # Combine arguments for pool worker
-    tasks = [(fp, user_tags) for fp in file_paths]
+    tasks = [(fp, user_tags, start_week, interval) for fp in file_paths]
 
     # --- PHASE 1: READ MULTIPLE FILES IN PARALLEL ---
     num_cores = worker_count(total_files)
@@ -304,6 +339,15 @@ def main(argv=None):
         raise e
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--selftest':
+        assert week_to_timepoint(44) == (11, True)       # legacy default: 44W -> 11
+        assert week_to_timepoint(4) == (1, True)
+        assert week_to_timepoint(2, 2, 3) == (1, True)   # start 2W, every 3W
+        assert week_to_timepoint(8, 2, 3) == (3, True)
+        assert week_to_timepoint(9, 2, 3) == (3, False)  # off schedule
+        assert week_to_timepoint(0, 3, 4) == (0, False)  # before first timepoint
+        print("selftest ok")
+        sys.exit(0)
     freeze_support()
     try:
         sys.exit(main())

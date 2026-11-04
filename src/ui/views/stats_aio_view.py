@@ -75,9 +75,27 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         on_click=reset_output_folder
     )
 
-    active_file_tags = {}
+    # --- Column headers (new Excel columns) and file tags (codes found in file names) ---
+    column_headers = []      # ordered: defines the column order in the output Excel
+    active_file_tags = {}    # tag code -> column header
+
+    new_column_input = ft.TextField(
+        label="New column header name", hint_text="e.g. Gender", width=280,
+        tooltip="Name of a new column in the output Excel file, e.g. Gender, Experimental Group, Test."
+    )
+    columns_row = ft.Row(wrap=True, spacing=8, run_spacing=8)
+    columns_hint = ft.Text("No column headers yet.", size=12, italic=True, color=AppColors.TEXT_MUTED)
+
+    tag_code_input = ft.TextField(
+        label="Tag present in your data files", hint_text="e.g. F", width=280,
+        tooltip="Code exactly as it appears in the file name, e.g. F, M, WT, TG, BEAM.\nThis code is written into the Excel cell."
+    )
+    column_dropdown = ft.Dropdown(
+        label="Goes into column", width=280, disabled=True,
+        tooltip="Pick one of the column headers you created above."
+    )
+
     tags_list_column = ft.Column(spacing=5)
-    
     tags_list_container = ft.Container(
         content=tags_list_column,
         padding=10,
@@ -87,71 +105,144 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         visible=False
     )
 
-    tag_code_input = ft.TextField(
-        label="File Tag (e.g., F)", width=150,
-        tooltip="Code as it appears in the file name, e.g. F, M, WT, TG, BEAM.\nThis code is written into the Excel cell."
-    )
-    tag_meaning_input = ft.TextField(
-        label="Column (e.g., Gender)", width=280,
-        tooltip="Excel column this code goes into.\nF -> Gender and M -> Gender give one 'Gender' column with F/M values.\nWeek parts like 44W become 'Timepoint' (44W -> 11) automatically."
-    )
+    def refresh_tagging():
+        """Rebuild column chips, dropdown options and the tag list from state."""
+        columns_row.controls = [
+            ft.Chip(
+                label=ft.Text(col),
+                delete_icon_color=AppColors.ERROR,
+                on_delete=lambda _, c=col: remove_column(c),
+            )
+            for col in column_headers
+        ]
+        columns_hint.visible = not column_headers
 
-    def remove_tag(code, row_control):
-        if code in active_file_tags:
-            del active_file_tags[code]
-        tags_list_column.controls.remove(row_control)
-        if not tags_list_column.controls:
-            tags_list_container.visible = False
+        column_dropdown.options = [ft.dropdown.Option(key=col, text=col) for col in column_headers]
+        column_dropdown.disabled = not column_headers
+        if column_dropdown.value not in column_headers:
+            column_dropdown.value = column_headers[-1] if column_headers else None
+
+        tags_list_column.controls = [
+            ft.Row([
+                ft.Text(f"🏷️  {code} ➔ {col}", color=AppColors.PRIMARY, weight=ft.FontWeight.BOLD, size=13),
+                ft.IconButton(
+                    icon=ft.Icons.DELETE,
+                    icon_color=AppColors.ERROR,
+                    icon_size=18,
+                    style=button_hover_style,
+                    tooltip=f"Remove tag '{code}'",
+                    on_click=lambda _, c=code: remove_tag(c)
+                )
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+            for col in column_headers
+            for code, tag_col in active_file_tags.items() if tag_col == col
+        ]
+        tags_list_container.visible = bool(active_file_tags)
         page.update()
+
+    def add_column(e):
+        name = new_column_input.value.strip()
+        if not name:
+            return
+        if name.lower() in (c.lower() for c in column_headers) or name.lower() in ("ids", "timepoint"):
+            status_text.value = f"Column '{name}' already exists or is reserved."
+            status_text.color = AppColors.ERROR
+            page.update()
+            return
+        column_headers.append(name)
+        column_dropdown.value = name
+        new_column_input.value = ""
+        refresh_tagging()
+
+    def remove_column(col):
+        column_headers.remove(col)
+        for code in [c for c, tag_col in active_file_tags.items() if tag_col == col]:
+            del active_file_tags[code]
+        refresh_tagging()
+
+    def remove_tag(code):
+        active_file_tags.pop(code, None)
+        refresh_tagging()
 
     def reset_all_tags(e):
+        column_headers.clear()
         active_file_tags.clear()
-        tags_list_column.controls.clear()
-        tags_list_container.visible = False
+        new_column_input.value = ""
         tag_code_input.value = ""
-        tag_meaning_input.value = ""
-        status_text.value = "All tags cleared."
+        column_dropdown.value = None
+        status_text.value = "All column headers and tags cleared."
         status_text.color = AppColors.TEXT_MUTED
-        page.update()
+        refresh_tagging()
 
     def add_tag(e):
         code = tag_code_input.value.strip().upper()
-        meaning = tag_meaning_input.value.strip()
-
-        if not code or not meaning:
+        col = column_dropdown.value
+        if not code:
+            return
+        if not col:
+            status_text.value = "Create a column header first, then pick it from the dropdown."
+            status_text.color = AppColors.ERROR
+            page.update()
             return
         if code in active_file_tags:
+            status_text.value = f"Tag '{code}' already goes into '{active_file_tags[code]}'."
+            status_text.color = AppColors.ERROR
+            page.update()
             return
-
-        active_file_tags[code] = meaning
-        tags_list_container.visible = True
-
-        row_control = ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-        row_control.controls = [
-            ft.Text(f"🏷️  {code} ➔ {meaning}", color=AppColors.PRIMARY, weight=ft.FontWeight.BOLD, size=13),
-            ft.IconButton(
-                icon=ft.Icons.DELETE,
-                icon_color=AppColors.ERROR,
-                icon_size=18,
-                style=button_hover_style,
-                tooltip=f"Remove tag '{code}'",
-                on_click=lambda _: remove_tag(code, row_control)
-            )
-        ]
-        tags_list_column.controls.append(row_control)
+        active_file_tags[code] = col
         tag_code_input.value = ""
-        tag_meaning_input.value = ""
-        page.update()
+        refresh_tagging()
 
+    new_column_input.on_submit = add_column
+    tag_code_input.on_submit = add_tag
+    add_column_btn = ft.Button("Add Column", icon=ft.Icons.VIEW_COLUMN, style=button_hover_style, on_click=add_column)
     add_tag_btn = ft.Button("Add Tag", icon=ft.Icons.ADD, style=button_hover_style, on_click=add_tag)
-    
+
     reset_tags_btn = ft.IconButton(
         icon=ft.Icons.CLEAR_ALL,
         icon_color=AppColors.ERROR,
-        tooltip="Clear All Defined Tags",
+        tooltip="Clear All Column Headers & Tags",
         style=button_hover_style,
         on_click=reset_all_tags
     )
+
+    # --- Timepoint schedule (experimental protocol) ---
+    start_week_input = ft.TextField(
+        label="First timepoint (week)", value="4", width=180,
+        input_filter=ft.NumbersOnlyInputFilter(),
+        tooltip="Week of your first experiment, e.g. 2 for 2W."
+    )
+    interval_input = ft.TextField(
+        label="Weeks between timepoints", value="4", width=200,
+        input_filter=ft.NumbersOnlyInputFilter(),
+        tooltip="How many weeks pass between experiments, e.g. 3 or 4."
+    )
+    schedule_preview = ft.Text(size=12, color=AppColors.TEXT_MUTED)
+
+    def read_schedule():
+        """Return (start_week, interval) or None if the inputs are invalid."""
+        try:
+            start, step = int(start_week_input.value), int(interval_input.value)
+        except (TypeError, ValueError):
+            return None
+        return (start, step) if step >= 1 else None
+
+    def update_schedule_preview(e=None):
+        schedule = read_schedule()
+        if schedule is None:
+            schedule_preview.value = "Enter whole numbers (interval at least 1 week)."
+            schedule_preview.color = AppColors.ERROR
+        else:
+            start, step = schedule
+            schedule_preview.value = "Timepoint mapping: " + ", ".join(
+                f"{start + i * step}W ➔ {i + 1}" for i in range(4)) + ", ..."
+            schedule_preview.color = AppColors.TEXT_MUTED
+        if e is not None:
+            page.update()
+
+    start_week_input.on_change = update_schedule_preview
+    interval_input.on_change = update_schedule_preview
+    update_schedule_preview()
 
     group_trials_switch = ft.Switch(
         label="Group Trials by Base ID & Tags (Calculate Means)",
@@ -196,8 +287,18 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
             page.update()
             return
 
+        schedule = read_schedule()
+        if schedule is None:
+            status_text.value = "Timepoint schedule needs whole numbers (interval at least 1 week)."
+            status_text.color = AppColors.ERROR
+            page.update()
+            return
+        start_week, interval = schedule
+
         out_path = output_folder_path if output_folder_path else input_folder_path
-        tags_json_string = json.dumps(active_file_tags)
+        # Order tags by column so output columns follow the order the user created them
+        ordered_tags = {code: col for col in column_headers for code, c in active_file_tags.items() if c == col}
+        tags_json_string = json.dumps(ordered_tags)
         should_group = "y" if group_trials_switch.value else "n"
 
         status_text.value = "Generating AIO statistics..."
@@ -212,7 +313,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         page.update()
 
         try:
-            process = await start_task("desc_analysis_aio", [input_folder_path, out_path, "Tagged_Experiment", tags_json_string, should_group])
+            process = await start_task("desc_analysis_aio", [input_folder_path, out_path, "Tagged_Experiment", tags_json_string, should_group, str(start_week), str(interval)])
             process_manager.register(TASK_ID, "AIO Statistics", process)
 
             line_count = 0
@@ -273,17 +374,34 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
 
     tagging_card = create_card(
         ft.Column([
-            ft.Text(
-                "Each tag adds an Excel column: the Column name is the header, the File Tag is the cell value "
-                "(WT/TG -> Experimental Group, F/M -> Gender, BEAM -> Test). Week codes like 44W fill 'Timepoint' automatically (44W -> 11).",
-                size=12, color=AppColors.TEXT_MUTED
-            ),
-            ft.Row([tag_code_input, tag_meaning_input, add_tag_btn, reset_tags_btn], spacing=10),
+            ft.Text("1. Create the column headers for your new Excel file.", weight=ft.FontWeight.BOLD, size=13),
+            ft.Row([new_column_input, add_column_btn, reset_tags_btn], spacing=10),
+            columns_hint,
+            columns_row,
+            ft.Text("2. Add the tags present in your data files and pick the column each one goes into.",
+                    weight=ft.FontWeight.BOLD, size=13),
+            ft.Text("Example: tags F and M ➔ column Gender give one 'Gender' column with F/M values.",
+                    size=12, color=AppColors.TEXT_MUTED),
+            ft.Row([tag_code_input, column_dropdown, add_tag_btn], spacing=10),
             tags_list_container,
             ft.Row([group_trials_switch], spacing=15),
         ], spacing=15),
         title="Dynamic File Tagging & Grouping",
         icon=ft.Icons.LABEL
+    )
+
+    timepoint_card = create_card(
+        ft.Column([
+            ft.Text(
+                "Week codes in file names (e.g. 44W) fill a 'Timepoint' column automatically. "
+                "Set when your experiments start and how often they repeat.",
+                size=12, color=AppColors.TEXT_MUTED
+            ),
+            ft.Row([start_week_input, interval_input], spacing=10),
+            schedule_preview,
+        ], spacing=15),
+        title="Timepoint Schedule",
+        icon=ft.Icons.SCHEDULE
     )
 
     return ft.ListView([
@@ -292,6 +410,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         ft.Container(height=10),
         folder_card,
         tagging_card,
+        timepoint_card,
         ft.Row([run_btn, stop_btn], spacing=10),
         progress_bar,
         terminal.get_control()
