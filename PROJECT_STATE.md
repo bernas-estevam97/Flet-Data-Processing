@@ -1,9 +1,9 @@
 # MotoRater Data Processing App - Project State & Cold Memory Checkpoint
 
-> **Date Updated**: November 4, 2026
+> **Date Updated**: November 18, 2026
 > **Status**: Fully operational
 > **Environment**: Python 3.10+ managed by `uv` (`.venv`, `uv.lock`)
-> **Framework**: Flet 1.0.4 (Desktop UI) | Pandas | rustpy-xlsxwriter
+> **Framework**: Flet 1.0.4 (Desktop UI) | Pandas | SciPy | rustpy-xlsxwriter
 
 ---
 
@@ -25,7 +25,7 @@ Flet-Data-Processing/
 ├── src/
 │   ├── main.py                 # Entry point: layout, NavigationRail, sidebar controls, --run-task dispatch
 │   ├── process_manager.py      # Task launching (subprocess or in-process thread), force stop, worker_count()
-│   ├── ex_filtering.py         # Raw data filtering (parallel pool, height cutoff, optional Positions sheet)
+│   ├── ex_filtering.py         # Raw data filtering v2 (kinematics rebuilt from positions, auto floor, swing threshold, QC columns)
 │   ├── desc_analysis.py        # Descriptive statistics (subject trial grouping, metric calculations)
 │   ├── desc_analysis_aio.py    # Tagged statistics (filename tag parser, Timepoint from week tags via configurable start week + interval)
 │   ├── merge_excel.py          # Vertical merge of identically structured Excel files
@@ -35,7 +35,7 @@ Flet-Data-Processing/
 │   │   ├── terminal.py         # Live log terminal with text selection & Copy Logs button
 │   │   └── views/
 │   │       ├── tutorial_view.py  # In-app guide (Steps 1-4, Sidebar Controls, help card with website link)
-│   │       ├── filtering_view.py # Filtering UI (parameter dropdowns, Height Cutoff + Keep Positions switches)
+│   │       ├── filtering_view.py # Filtering UI (Experiment Setup, Floor & Height, Paw Swing, Output cards)
 │   │       ├── stats_view.py     # Descriptive statistics UI (grouping switch)
 │   │       ├── stats_aio_view.py # AIO statistics UI (column headers, tag dropdown, timepoint schedule)
 │   │       └── merge_view.py     # Excel merger UI (selected files list with per-file remove)
@@ -61,6 +61,8 @@ Flet-Data-Processing/
 - `start_task(script, args)` picks how to run a processing script:
   - **Dev run / `flet pack` exe**: spawns a child process. In a PyInstaller exe, `main.py` relaunches itself with `--run-task <script>` (`RUN_TASK_FLAG`) and dispatches to `task_main(script)`.
   - **`flet build` app**: Python is embedded in the Flutter exe and cannot spawn processes, so the script runs in a thread (`InProcessTask`) that mimics `asyncio.subprocess.Process`. Its pool falls back to `ThreadPoolExecutor`, which is much slower (about 5x on filtering).
+- In `main.py`, `freeze_support()` and the `--run-task` dispatch run before `import flet` and the UI views, so exe child processes (task + pool workers) skip those imports. Keep them at the top.
+- Packed exe: the first run after a build (or reboot) is much slower (measured 18 s vs 3.7 s wall for 20 files) because Windows Defender scans the new exe/DLLs and the disk cache is cold. Later runs are as fast as `flet run`.
 - `can_spawn_processes()` detects which mode is possible.
 - Windows children start with `BELOW_NORMAL_PRIORITY_CLASS` (inherited by pool workers) so the PC stays responsive.
 - POSIX children start with `start_new_session=True`, so Force Stop's `os.killpg` kills the task tree and not the GUI (fixed Linux/macOS bug).
@@ -77,10 +79,19 @@ Flet-Data-Processing/
 ### E. Fast Excel Writing in Filtering (`ex_filtering.py`)
 - Output is written with `rustpy_xlsxwriter.write_worksheets(...)` (Rust-based) from row dicts built by `records(df)`. About 4-7x faster than `DataFrame.to_excel`.
 - Output values match the old pandas writer, except tiny differences at the 17th significant digit.
-- **Keep Positions Sheet** switch (`keep_positions` "yes"/"no", last CLI argument): when off, the raw `Positions (used)` sheet is skipped, making filtering about 2x faster.
+- **Keep Positions Sheet** switch (`keep_positions` "yes"/"no", CLI argument 8): when off, the raw `Positions (used)` sheet is skipped, making filtering about 2x faster.
 - `flet pack` needs `--pyinstaller-build-args="--copy-metadata=rustpy-xlsxwriter"`, otherwise the packed exe crashes on import (see `commands.txt`).
 - Remaining floor: reading is about 0.5 s per file. Bigger gains would need a different output format (CSV/Parquet), which would change the downstream pipeline.
 - Statistics scripts still write with pandas + `xlsxwriter`; merge uses `openpyxl`.
+
+### E2. Filtering Logic v2 (`ex_filtering.py`, ported from `optimized_excel_filtering_v2.py`)
+- `kinematics_from_positions()` rebuilds every Kinematics column with a known formula (`Y_METRICS`, `DIST_METRICS`, `ANGLE_METRICS`, paw `Vx/Vy/Speed/Ax/Ay/|Acc|` via Savitzky-Golay window 5 order 2) from `Positions (used)`. The source sheet's MAD outlier filter cuts swing peaks. Columns without a formula are kept from the sheet and listed as a warning.
+- Height/Clearance/Drag columns are found by name (`height_columns()`); upside-down (right) view = column mean > 0.3.
+- Floor: `auto` = 10th percentile of left hind toe Y (90th of |right|) inside the movement window (before the height cutoff); `fixed` = `SUBTRACTION_MAP` / `OFFSET_MAP`.
+- Swing threshold: paw kinematic values are blanked where that paw's speed <= threshold. Defaults `SWING_SPEED_BY_EXPERIMENT` (groundwalk/gridwalk 0.1, beamwalk 0.03, else 0.1). The UI duplicates these defaults in `filtering_view.py` to avoid importing pandas/scipy at startup; keep both in sync.
+- QC columns per file: `QC Tracked Frames (%)`, `QC Hind Ahead of Front (%)`, `QC Step Length SD (Left/Right) (m)`.
+- CLI args: `input choice animal experiment old/new output height_cutoff keep_positions floor_mode(auto/fixed) swing_speed` (last two optional; empty swing = experiment default).
+- Original standalone `optimized_excel_filtering_v2.py` (repo root, untracked) gives identical Kinematics output; verified on 6 SCA2-Q129 beam/footprint files.
 
 ### F. Excel Reading & Lock Files
 - Readers try engines in order `calamine` ➔ `openpyxl` ➔ default.

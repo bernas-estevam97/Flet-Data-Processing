@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import traceback
@@ -6,6 +7,7 @@ import datetime
 import warnings
 import pandas as pd
 import numpy as np
+from scipy.signal import savgol_filter
 import rustpy_xlsxwriter
 import multiprocessing
 import concurrent.futures
@@ -63,13 +65,169 @@ OFFSET_MAP = {
     ("0", "swimming", "new"): 0.036,
 }
 
+# --- v2 SETTINGS ---
+SWING_SPEED_DEFAULT = 0.1    # m/s; paw speed above this = swing. 0 keeps every frame (stance included)
+# Per-experiment defaults, from v2 (Savitzky-Golay) paw speed histograms on 15 SCA2-Q129 sessions per test:
+# groundwalk/gridwalk speeds are bimodal (jitter ~0.02, swing ~0.5-0.6) with the valley at 0.08-0.126 -> 0.1.
+# beamwalk has one broad peak (~0.06-0.1, slow gripping/sliding), no valley -> 0.03 only removes jitter.
+# swimming not measured -> SWING_SPEED_DEFAULT.
+SWING_SPEED_BY_EXPERIMENT = {"groundwalk": 0.1, "gridwalk": 0.1, "beamwalk": 0.03}
+FLOOR_PCT = 10               # floor = 10th percentile of left hind toe Y (90th in the upside-down right view)
+
+# --- Kinematics rebuilt from 'Positions (used)' ---
+# The calculations_*.py scripts run remove_outliers() (median/MAD z-score) on every metric before saving the
+# Kinematics sheet. Paws rest for most frames, so the median is the resting value and every swing peak gets
+# flagged and spline-filled: paw speeds come out ~10x too low and toe-clearance / step-length peaks are cut.
+# 'Positions (used)' holds the smoothed positions those metrics came from, untouched by that step, so v2
+# recomputes each metric from it with the same formulas. Columns with no formula here are kept from the sheet.
+_P = '/Feature/'
+Y_METRICS = {  # column: (marker, take abs)
+    'Toe Clearance Forepaw (Right)': ('Paw/Tao/Front/Right', True), 'Toe Clearance Hindpaw (Right)': ('Paw/Tao/Hind/Right', True),
+    'Toe Clearance Forepaw (Left)': ('Paw/Tao/Front/Left', False), 'Toe Clearance Hindpaw (Left)': ('Paw/Tao/Hind/Left', False),
+    'Iliac Crest Height (Right)': ('PSIS/Right', True), 'Iliac Crest Height (Left)': ('PSIS/Left', False),
+    'Hip Height (Right)': ('Hip/Right', True), 'Hip Height (Left)': ('Hip/Left', False),
+    'Tail Base Height (Right)': ('Tail/Base/RightView', True), 'Tail Base Height (Left)': ('Tail/Base/LeftView', False),
+    # Saved sheets are mixed (most use RightView, some LeftView: e.g. Footprint weeks 36-40, ~55% of Beam).
+    # v2 always uses LeftView, as the calculations scripts do, so every session measures the same thing.
+    'Nose Height': ('Head/Nose/LeftView', True), 'Tail Tip Height': ('Tail/Tip/LeftView', True),
+    'Shoulder Height (Right)': ('Shoulder/Upper/Right', False), 'Shoulder Height (Left)': ('Shoulder/Upper/Left', False),
+    'Front Paw Drag (Right)': ('Paw/Tao/Front/Right', True), 'Front Paw Drag (Left)': ('Paw/Tao/Front/Left', True),
+    'Hind Paw Drag (Right)': ('Paw/Tao/Hind/Right', True), 'Hind Paw Drag (Left)': ('Paw/Tao/Hind/Left', True),
+    'Head Rotation': ('Head/Jaw', False),
+}
+DIST_METRICS = {
+    'Step Width (Hind)': ('Paw/Hind/Left', 'Paw/Hind/Right'), 'Step Width (Front)': ('Paw/Front/Left', 'Paw/Front/Right'),
+    'Step Length (Left)': ('Paw/Front/Left', 'Paw/Hind/Left'), 'Step Length (Right)': ('Paw/Front/Right', 'Paw/Hind/Right'),
+    'Protraction/Retraction (Right)': ('Paw/Tao/Hind/Right', 'PSIS/Right'),
+    'Protraction/Retraction (Left)': ('Paw/Tao/Hind/Left', 'PSIS/Left'),
+}
+ANGLE_METRICS = {  # angle at the middle marker
+    **{f'Hip Angle ({s})': ('PSIS/' + s, 'Hip/' + s, 'Knee/' + s) for s in ('Right', 'Left')},
+    **{f'Knee Angle ({s})': ('Hip/' + s, 'Knee/' + s, 'Ankle/' + s) for s in ('Right', 'Left')},
+    **{f'Ankle Angle ({s})': ('Knee/' + s, 'Ankle/' + s, f'Paw/Tao/Hind/{s}') for s in ('Right', 'Left')},
+    **{f'Shoulder Angle ({s})': (f'Shoulder/Upper/{s}', f'Shoulder/Lower/{s}', 'Elbow/' + s) for s in ('Right', 'Left')},
+    **{f'Elbow Angle ({s})': (f'Shoulder/Lower/{s}', 'Elbow/' + s, 'Wrist/' + s) for s in ('Right', 'Left')},
+    **{f'Wrist Angle ({s})': ('Elbow/' + s, 'Wrist/' + s, f'Paw/Tao/Front/{s}') for s in ('Right', 'Left')},
+    'Tail Angle (Side View)': ('Tail/Base/LeftView', 'Tail/Center/LeftView', 'Tail/Tip/LeftView'),
+}
+PAW_KIN = re.compile(r'^(Front|Hind) (Left|Right)(?: Paw)? (Vx|Vy|Speed|Ax|Ay|\|Acc\|) \(')
+
+
+def _xy(pos, marker):
+    x, y = _P + marker + '_X', _P + marker + '_Y'
+    return (pos[x], pos[y]) if x in pos and y in pos else (None, None)
+
+
+def _savgol(s, deriv, dt):
+    """Savitzky-Golay derivative (window 5, order 2, as the calculations scripts smooth); NaN stays NaN."""
+    if s.notna().sum() < 5:
+        return pd.Series(np.nan, index=s.index)
+    filled = s.interpolate(limit_direction='both')
+    return pd.Series(savgol_filter(filled, 5, 2, deriv=deriv, delta=dt), index=s.index).where(s.notna())
+
+
+def kinematics_from_positions(pos, kin):
+    """Rebuild every Kinematics column that has a known formula from the position sheet (see note above).
+    Returns (dataframe in the sheet's column order, list of columns kept from the sheet)."""
+    out = pd.DataFrame({'Time': pos['Time']}, index=pos.index)
+    dt = pos['Time'].diff().median()
+    sheet = kin.set_index(kin['Time'].round(6)) if 'Time' in kin else None
+    kept = []
+    for col in kin.columns:
+        if col == 'Time':
+            continue
+        val = None
+        if col in Y_METRICS:
+            x, y = _xy(pos, Y_METRICS[col][0])
+            val = None if y is None else (y.abs() if Y_METRICS[col][1] else y)
+        elif col in DIST_METRICS:
+            (x1, y1), (x2, y2) = (_xy(pos, m) for m in DIST_METRICS[col])
+            val = None if x1 is None or x2 is None else np.hypot(x1 - x2, y1 - y2)
+        elif col in ANGLE_METRICS:
+            pts = [_xy(pos, m) for m in ANGLE_METRICS[col]]
+            if all(p[0] is not None for p in pts):
+                (x1, y1), (x2, y2), (x3, y3) = pts
+                ax_, ay_, bx, by = x1 - x2, y1 - y2, x3 - x2, y3 - y2
+                norm = np.hypot(ax_, ay_) * np.hypot(bx, by)
+                cos = ((ax_ * bx + ay_ * by) / norm.where(norm > 1e-24)).clip(-1, 1)
+                val = np.degrees(np.arccos(cos))
+        elif (m := PAW_KIN.match(col)) and dt > 0:
+            x, y = _xy(pos, f'Paw/{m[1]}/{m[2]}')
+            if x is not None:
+                kind = m[3]
+                d = 2 if kind in ('Ax', 'Ay', '|Acc|') else 1
+                gx, gy = _savgol(x, d, dt), _savgol(y, d, dt)
+                val = {'Vx': gx, 'Ax': gx, 'Vy': gy, 'Ay': gy}.get(kind, np.hypot(gx, gy))
+        if val is None:
+            kept.append(col)
+            val = sheet[col].reindex(pos['Time'].round(6)).to_numpy() if sheet is not None else np.nan
+        out[col] = val
+    return out, kept
+
+
+def height_columns(df):
+    """Height / clearance / drag columns split by view. Upside-down (right) view values are raw Y coordinates
+    around 0.5 m; normal (left) view values are already near 0. Name-based, so column order does not matter."""
+    cols = [c for c in df.columns if isinstance(c, str) and ('Height' in c or 'Clearance' in c or 'Drag' in c)]
+    means = {c: df[c].mean() for c in cols}
+    right = [c for c in cols if pd.notna(means[c]) and means[c] > 0.3]
+    left = [c for c in cols if c not in right]
+    return right, left
+
+
+def session_floors(raw_win):
+    """Floor Y of each side view from the hind toe while it is on the ground (it rests there for most of
+    the stance phase). The right view is upside down: its floor is the LARGEST Y."""
+    r, l = '/Feature/Paw/Tao/Hind/Right_Y', '/Feature/Paw/Tao/Hind/Left_Y'
+    floor_r = raw_win[r].abs().quantile(1 - FLOOR_PCT / 100) if r in raw_win and raw_win[r].notna().any() else None
+    floor_l = raw_win[l].quantile(FLOOR_PCT / 100) if l in raw_win and raw_win[l].notna().any() else None
+    return floor_r, floor_l
+
+
+def paw_kinematic_columns(df):
+    """{'Front Right': [its Vx, Vy, Speed, Ax, Ay, |Acc| columns], ...}"""
+    out = {}
+    for c in df.columns:
+        if isinstance(c, str) and c.endswith(" Speed (m/s)"):
+            paw = c[:-len(" Speed (m/s)")]
+            out[paw] = [k for k in df.columns if isinstance(k, str) and k.startswith(paw + " ") and "(m/s" in k]
+    return out
+
+
+def qc_values(raw_win, kin):
+    """Per-session tracking checks.
+    - Tracked frames: % of window frames where all four paws have a position.
+    - Step Length SD: ~0 means front and hind markers move as one (tracker locked both on one paw).
+    - Hind ahead of front: % of frames where the hind paw is ahead of the front paw on the same side
+      (label swaps; should be near 0)."""
+    paws = [f'/Feature/Paw/{fh}/{side}_X' for fh in ('Front', 'Hind') for side in ('Left', 'Right')]
+    qc = {}
+    if all(p in raw_win for p in paws):
+        qc['QC Tracked Frames (%)'] = 100 * raw_win[paws].notna().all(axis=1).mean()
+        nose = raw_win['/Feature/Head/Nose_X'].dropna() if '/Feature/Head/Nose_X' in raw_win else pd.Series(dtype=float)
+        direction = np.sign(nose.iloc[-1] - nose.iloc[0]) if len(nose) > 1 else 1.0
+        ahead = [(direction * (raw_win[f'/Feature/Paw/Hind/{s}_X'] - raw_win[f'/Feature/Paw/Front/{s}_X']) > 0)
+                 for s in ('Left', 'Right')]
+        qc['QC Hind Ahead of Front (%)'] = 100 * pd.concat(ahead).mean()
+    for side in ('Left', 'Right'):
+        c = f'Step Length ({side})'
+        if c in kin:
+            qc[f'QC Step Length SD ({side}) (m)'] = kin[c].std()
+    return qc
+
+
 def records(df):
     """Rows as dicts for rustpy_xlsxwriter (~15x faster than DataFrame.to_excel). NaN cells stay empty."""
     return df.astype(object).where(df.notna(), None).to_dict('records')
 
 
 # --- WORKER FUNCTION ---
-def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff="no", keep_positions="yes"):
+def is_yes(value):
+    return str(value).lower() in ["yes", "true", "1"]
+
+
+def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff="no",
+                           keep_positions="yes", floor_mode="auto", swing_speed=SWING_SPEED_DEFAULT):
     index, file_path, total_files = file_info_tuple
     file_name = os.path.basename(file_path)
     captured_warnings = []
@@ -120,62 +278,70 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             else:
                 last_index = len(df_raw_clean) - 1
 
-            # 3. Filter Kinematics & Cast Numeric Columns to Float
-            df_kin_filtered = df_kin_clean.iloc[start_index : last_index + 1].copy()
+            # 3. Kinematics rebuilt from positions, then cut to the movement window
+            for col in df_kin_clean.columns:
+                if col != 'Time':
+                    df_kin_clean[col] = pd.to_numeric(df_kin_clean[col], errors='coerce').astype(float)
+            raw_win = df_raw_clean.iloc[start_index : last_index + 1]
+            df_kin_full, kept = kinematics_from_positions(df_raw_clean, df_kin_clean)
+            if kept:
+                captured_warnings.append(f"Kept from Kinematics sheet (no formula / markers missing): {', '.join(kept)}")
+            df_kin_filtered = df_kin_full.iloc[start_index : last_index + 1].copy()
 
-            numeric_cols = [col for col in df_kin_filtered.columns if col != 'Time']
-            for col in numeric_cols:
-                df_kin_filtered[col] = pd.to_numeric(df_kin_filtered[col], errors='coerce').astype(float)
-
-            # 4. Apply Subtraction & Inversion
-            target_indices = [5, 6, 9, 11, 13, 21, 23] if experiment == "gridwalk" else [5, 6, 9, 11, 13, 17]
-
-            def safe_mean_gt(df, col_idx, thresh=0.3):
-                if col_idx < df.shape[1]:
-                    s = df.iloc[:, col_idx].dropna()
-                    return not s.empty and s.mean() > thresh
-                return False
-
-            if experiment == "gridwalk":
-                if safe_mean_gt(df_kin_filtered, 15): target_indices.append(15)
-                if safe_mean_gt(df_kin_filtered, 19): target_indices.append(19)
-                if safe_mean_gt(df_kin_filtered, 20): target_indices.append(20)
-            else:
-                if safe_mean_gt(df_kin_filtered, 15): target_indices.append(15)
-                if safe_mean_gt(df_kin_filtered, 16): target_indices.append(16)
-            
-            target_indices_offset = [i for i in [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] if i < df_kin_filtered.shape[1]]
-            target_indices = [i for i in target_indices if i < df_kin_filtered.shape[1]]
-            current_combo = (animal_choice, experiment, old_or_new)
-            
-            value_to_subtract = SUBTRACTION_MAP.get(current_combo)
-            value_to_add_offset = OFFSET_MAP.get(current_combo)
-
-            if value_to_add_offset is not None and target_indices_offset:
-                df_kin_filtered.iloc[:, target_indices_offset] += value_to_add_offset
-
-            if value_to_subtract is not None and target_indices:
-                df_kin_filtered.iloc[:, target_indices] = value_to_subtract - df_kin_filtered.iloc[:, target_indices]
-
-            # Replace 0 with np.nan safely on available numeric columns 26:50
-            max_col = min(50, df_kin_filtered.shape[1])
-            if max_col > 26:
-                cols_to_replace_zero = df_kin_filtered.columns[26:max_col]
-                df_kin_filtered[cols_to_replace_zero] = df_kin_filtered[cols_to_replace_zero].replace(0, np.nan)
-
-            # 5. Hind Paw Timestamp Logic
-            if str(height_cutoff).lower() in ["yes", "true", "1"]:
-                hind_paw_col = '/Feature/Paw/Tao/Hind/Left_X' 
-                
+            # Height cutoff time: heights are only kept before the hind paw reaches this X
+            hind_timestamp = None
+            if is_yes(height_cutoff):
+                hind_paw_col = '/Feature/Paw/Tao/Hind/Left_X'
                 if hind_paw_col in df_raw_clean.columns and 'Time' in df_raw_clean.columns:
                     threshold_val = 0 if old_or_new == "new" else -0.016
                     hind_reach = df_raw_clean[df_raw_clean[hind_paw_col] >= threshold_val]
-                    
                     if not hind_reach.empty:
                         hind_timestamp = df_raw_clean.loc[hind_reach.index[0], "Time"]
-                        cols_F_to_S = df_kin_filtered.columns[5:min(19, df_kin_filtered.shape[1])]
-                        mask_time = df_kin_filtered['Time'] > hind_timestamp
-                        df_kin_filtered.loc[mask_time, cols_F_to_S] = np.nan
+
+            # 4. Heights relative to the floor (columns picked by NAME, not position)
+            info = []
+            right_cols, left_cols = height_columns(df_kin_filtered)
+            if floor_mode == "auto":
+                # Floor from the same frames the heights are kept for (before the height cutoff)
+                height_win = raw_win if hind_timestamp is None else raw_win[raw_win['Time'] <= hind_timestamp]
+                floor_r, floor_l = session_floors(height_win)
+                if right_cols and floor_r is not None:
+                    df_kin_filtered[right_cols] = floor_r - df_kin_filtered[right_cols]
+                if left_cols and floor_l is not None:
+                    df_kin_filtered[left_cols] = df_kin_filtered[left_cols] - floor_l
+                if (right_cols and floor_r is None) or (left_cols and floor_l is None):
+                    captured_warnings.append("Floor not estimated (hind toe columns missing); heights left as is.")
+                info.append(f"floor R={floor_r if floor_r is None else round(floor_r, 4)} "
+                            f"L={floor_l if floor_l is None else round(floor_l, 4)}")
+            else:  # fixed: SUBTRACTION_MAP / OFFSET_MAP constants
+                combo = (animal_choice, experiment, old_or_new)
+                value_to_subtract, value_to_add_offset = SUBTRACTION_MAP.get(combo), OFFSET_MAP.get(combo)
+                if value_to_add_offset:
+                    df_kin_filtered[right_cols + left_cols] += value_to_add_offset
+                if value_to_subtract is not None and right_cols:
+                    df_kin_filtered[right_cols] = value_to_subtract - df_kin_filtered[right_cols]
+                elif value_to_subtract is None:
+                    captured_warnings.append(f"No fixed floor constant for {combo}; heights left as is.")
+            info.append(f"upside-down view columns: {len(right_cols)}")
+
+            # 5a. Paw speed / acceleration: keep swing frames only (explicit speed threshold)
+            for paw, cols in paw_kinematic_columns(df_kin_filtered).items():
+                all_zero = [c for c in cols if (df_kin_filtered[c].fillna(0) == 0).all()]
+                if all_zero:  # columns zeroed by the old outlier filter carry no data
+                    df_kin_filtered[all_zero] = np.nan
+                    captured_warnings.append(f"{paw}: no data in {', '.join(all_zero)}")
+                if swing_speed > 0:
+                    stance = ~(df_kin_filtered[f"{paw} Speed (m/s)"] > swing_speed)
+                    df_kin_filtered.loc[stance, cols] = np.nan
+
+            # 5b. Hind paw height cutoff (height columns only, by name)
+            if hind_timestamp is not None:
+                mask_time = df_kin_filtered['Time'] > hind_timestamp
+                df_kin_filtered.loc[mask_time, right_cols + left_cols] = np.nan
+
+            # 5c. Quality-control columns (constant per session, so they reach the merged file as measurements)
+            for name, value in qc_values(raw_win, df_kin_filtered).items():
+                df_kin_filtered[name] = value
 
             # 6. Statistics and Saving
             time_series = df_kin_filtered['Time'].dropna() if 'Time' in df_kin_filtered.columns else pd.Series(dtype=float)
@@ -224,7 +390,7 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             temp_output_file = os.path.join(output_folder, f"~${os.path.basename(output_file)}")
             # Kinematics sheet: filtered rows, one empty row, then duration and stats rows
             kin_records = records(df_kin_filtered) + [dict.fromkeys(df_kin_filtered.columns)] + records(duration_df) + records(stats_output)
-            sheets = [('Positions (used)', records(df_raw))] if str(keep_positions).lower() in ["yes", "true", "1"] else []
+            sheets = [('Positions (used)', records(df_raw))] if is_yes(keep_positions) else []
             sheets.append(('Kinematics', kin_records))
             rustpy_xlsxwriter.write_worksheets(sheets, temp_output_file, bold_headers=True)
 
@@ -234,7 +400,7 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             for w in w_log:
                 captured_warnings.append(f"{w.category.__name__}: {str(w.message)}")
 
-        return (True, file_name, f"Processed file {index + 1} of {total_files}: {file_name}", captured_warnings, False)
+        return (True, file_name, f"Processed file {index + 1} of {total_files}: {file_name} (" + "; ".join(info) + ")", captured_warnings, False)
 
     except Exception as e:
         temp_output_file = os.path.join(output_folder, f"~${os.path.basename(output_file)}")
@@ -259,13 +425,23 @@ def main(argv=None):
         output_folder = argv[6] if len(argv) > 6 and argv[6].strip() else folder_input
         height_cutoff = argv[7] if len(argv) > 7 else "no"
         keep_positions = argv[8] if len(argv) > 8 else "yes"
+        floor_mode = argv[9] if len(argv) > 9 and argv[9] in ("auto", "fixed") else "auto"
+        swing_arg = argv[10].strip() if len(argv) > 10 else ""
+        try:
+            swing_speed = float(swing_arg) if swing_arg else SWING_SPEED_BY_EXPERIMENT.get(experiment, SWING_SPEED_DEFAULT)
+        except ValueError:
+            print(f"[ERROR] Invalid swing speed threshold: {swing_arg}")
+            return 1
+        if swing_speed < 0:
+            print(f"[ERROR] Swing speed threshold must be >= 0, got {swing_speed}")
+            return 1
 
         os.makedirs(output_folder, exist_ok=True)
 
         print(f"[START] Running excel filtering...")
         print(f"[PATH] Input Folder: {folder_input}")
         print(f"[PATH] Output Folder: {output_folder}")
-        print(f"[CONFIG] Settings: Cutoff({choice}) | Animal({animal_choice}) | {experiment} | {old_or_new} | Height Cutoff: {height_cutoff} | Keep Positions: {keep_positions}")
+        print(f"[CONFIG] Settings: Cutoff({choice}) | Animal({animal_choice}) | {experiment} | {old_or_new} | Height Cutoff: {height_cutoff} | Keep Positions: {keep_positions} | Floor: {floor_mode} | Swing: {swing_speed} m/s")
 
         if not os.path.isdir(folder_input):
             print(f"[ERROR] The provided input path is not a valid directory: {folder_input}")
@@ -300,6 +476,18 @@ def main(argv=None):
         old_or_new = get_valid_input("Old or New settings? ", ["old", "new"], "Choose 'old' or 'new'.")
         height_cutoff = get_valid_input("Apply hind paw height cutoff? (yes/no): ", ["yes", "no"], "Choose 'yes' or 'no'.")
         keep_positions = get_valid_input("Keep the 'Positions (used)' sheet in filtered files? (yes/no): ", ["yes", "no"], "Choose 'yes' or 'no'.")
+        floor_mode = get_valid_input("Floor reference - auto (measured per session) or fixed (old/new constants)? ",
+                                     ["auto", "fixed"], "Choose 'auto' or 'fixed'.")
+        default_swing = SWING_SPEED_BY_EXPERIMENT.get(experiment, SWING_SPEED_DEFAULT)
+        while True:
+            sw = input(f"Paw swing speed threshold in m/s (Enter = {default_swing} for {experiment}, 0 = keep stance frames): ").strip()
+            try:
+                swing_speed = float(sw) if sw else default_swing
+                if swing_speed >= 0:
+                    break
+            except ValueError:
+                pass
+            print("[!] Enter a number >= 0.")
         output_folder = folder_output
 
     file_paths = [os.path.join(folder_input, f) for f in os.listdir(folder_input) 
@@ -345,7 +533,7 @@ def main(argv=None):
 
     with open(log_file_path, 'w', encoding='utf-8') as log_file:
         log_file.write(f"--- Processing Started at {datetime.datetime.now()} ---\n")
-        log_file.write(f"Parameters: Choice={choice}, Animal={animal_choice}, Exp={experiment}, Set={old_or_new}, HeightCutoff={height_cutoff}, KeepPositions={keep_positions}\n")
+        log_file.write(f"Parameters: Choice={choice}, Animal={animal_choice}, Exp={experiment}, Set={old_or_new}, HeightCutoff={height_cutoff}, KeepPositions={keep_positions}, Floor={floor_mode}, Swing={swing_speed} m/s\n")
         log_file.write("-" * 50 + "\n")
 
         pool_broken = False
@@ -355,7 +543,7 @@ def main(argv=None):
             pool_class = ProcessPoolExecutor if can_spawn_processes() and num_processes > 1 else ThreadPoolExecutor
             executor = pool_class(max_workers=num_processes)
             futures = [
-                executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff, keep_positions)
+                executor.submit(filter_excel_by_column, item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff, keep_positions, floor_mode, swing_speed)
                 for item in indexed_files
             ]
             
@@ -394,7 +582,7 @@ def main(argv=None):
                 if os.path.exists(out_file) or fname in skipped_files or any(f[0] == fname for f in failed_files) or fname in [f for f in files_with_warnings]:
                     continue
                 try:
-                    res = filter_excel_by_column(item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff, keep_positions)
+                    res = filter_excel_by_column(item, choice, animal_choice, experiment, old_or_new, output_folder, height_cutoff, keep_positions, floor_mode, swing_speed)
                     handle_result_tuple(res, log_file)
                 except Exception as exc:
                     error_str = str(exc) or exc.__class__.__name__

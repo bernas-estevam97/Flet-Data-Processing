@@ -25,14 +25,20 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
                 """
 1. **Select Data Folder**: Choose the folder containing your raw MotoRater `.xlsx` files.
 2. **Select Output Folder (Optional)**: Choose where cleaned `_filtered.xlsx` files will be saved (defaults to input folder).
-3. **Configure Experiment Settings**:
-   - **Cutoff Location**: Choose start trigger location (Tail Tip, Tail Center, Tail Base, or Both Paws).
-   - **Animal Species**: Select *Mus Musculus* or *Acomys*.
+3. **Experiment Setup**:
    - **Experiment Type**: Select Groundwalk, Gridwalk, Beamwalk, or Swimming.
-   - **Camera Settings**: Select Old vs New calibration settings.
-   - **Hind Paw Height Cutoff**: Enable to truncate kinematics past hind paw touch threshold.
+   - **Animal Species**: Select *Mus Musculus* or *Acomys*.
+   - **Camera Settings**: Select Old vs New camera setup.
+   - **Cutoff Starts Where?**: The marker that marks the start of movement (Tail Tip, Tail Center, Tail Base, or Both Paws). Movement ends when the nose stops.
+4. **Floor & Height Reference**:
+   - **Floor Reference**: *Auto* measures the floor in each file from the resting hind toe, so heights stay correct when the setup moves between sessions. *Fixed* uses the stored constant for the selected species, experiment and camera.
+   - **Hind Paw Height Cutoff**: Blanks height, clearance and drag values after the hind paw passes the camera threshold.
+5. **Paw Swing Detection**:
+   - **Swing Speed Threshold (m/s)**: Paw speed and acceleration are kept only for frames where that paw moves faster than this value (swing phase). The recommended value fills in when you pick the experiment (Groundwalk/Gridwalk 0.1, Beamwalk 0.03). Use the reset button to restore it. Enter **0** to keep every frame.
+6. **Output**:
    - **Keep Positions Sheet**: Copies the raw `Positions (used)` sheet into each filtered file. Turn off for about 2x faster filtering when you don't need the positions.
-4. **Run**: Click **Run Data Filtering**. Files are processed in the background with live log feedback (in parallel or one at a time, see **Sidebar Controls** below). Already filtered files will automatically skip to save time.
+   - Kinematics are rebuilt from the `Positions (used)` sheet, and quality-control columns (`QC Tracked Frames (%)`, `QC Hind Ahead of Front (%)`, `QC Step Length SD`) are added to every file.
+7. **Run**: Click **Run Data Filtering**. Files are processed in the background with live log feedback (in parallel or one at a time, see **Sidebar Controls** below). Already filtered files will automatically skip to save time.
                 """,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
             )

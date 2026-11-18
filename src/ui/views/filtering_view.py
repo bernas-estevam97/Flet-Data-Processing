@@ -110,11 +110,91 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         ], expand=True
     )
 
+    def hint(text=""):
+        return ft.Text(text, size=12, color=AppColors.TEXT_MUTED)
+
+    # --- Floor reference ---
+    floor_dropdown = ft.Dropdown(
+        label="Floor Reference", value="auto",
+        options=[
+            ft.dropdown.Option(key="auto", text="Auto (measured per session)"),
+            ft.dropdown.Option(key="fixed", text="Fixed (species / camera constants)"),
+        ], expand=True
+    )
+    floor_hint = hint()
+
+    def update_floor_hint(e=None):
+        if floor_dropdown.value == "auto":
+            floor_hint.value = ("Floor = resting level of the hind toe in each file. Heights stay correct "
+                                "when the camera or setup moves between sessions.")
+        else:
+            floor_hint.value = ("Uses the stored constant for the selected species, experiment and camera "
+                                "settings. Combinations without a constant are left as is.")
+        if e is not None:
+            page.update()
+
+    floor_dropdown.on_select = update_floor_hint
+    update_floor_hint()
+
     height_cutoff_switch = ft.Switch(
         label="Apply Hind Paw Height Cutoff",
         value=False,
         active_color=AppColors.PRIMARY,
-        tooltip="Truncate kinematics after hind paw threshold timestamp"
+        tooltip="Blank height, clearance and drag values after the hind paw passes the camera threshold"
+    )
+
+    # --- Paw swing detection ---
+    # Keep in sync with SWING_SPEED_BY_EXPERIMENT / SWING_SPEED_DEFAULT in ex_filtering.py
+    # (not imported here so the UI does not load pandas/scipy at startup).
+    swing_defaults = {"groundwalk": 0.1, "gridwalk": 0.1, "beamwalk": 0.03}
+
+    def default_swing():
+        return str(swing_defaults.get(experiment_dropdown.value, 0.1))
+
+    swing_input = ft.TextField(
+        label="Swing Speed Threshold", value=default_swing(), width=220,
+        suffix="m/s",
+        input_filter=ft.InputFilter(regex_string=r"^\d*\.?\d*$", allow=True, replacement_string=""),
+        tooltip="Paw speed above this value counts as swing. 0 keeps every frame."
+    )
+    swing_hint = hint()
+
+    def read_swing():
+        try:
+            return float(swing_input.value)
+        except (TypeError, ValueError):
+            return None
+
+    def update_swing_hint(e=None):
+        value = read_swing()
+        if value is None:
+            swing_input.error = "Enter a number (0 or more)"
+            swing_hint.value = ""
+        else:
+            swing_input.error = None
+            exp_name = experiment_dropdown.value.capitalize()
+            if value == 0:
+                swing_hint.value = "0 m/s: every frame is kept, stance included."
+            else:
+                swing_hint.value = (f"Paw speed and acceleration are kept only where that paw moves faster than "
+                                    f"{value} m/s (swing). Recommended for {exp_name}: {default_swing()} m/s.")
+        if e is not None:
+            page.update()
+
+    def reset_swing(e=None):
+        swing_input.value = default_swing()
+        update_swing_hint(e)
+
+    swing_input.on_change = update_swing_hint
+    experiment_dropdown.on_select = reset_swing  # new experiment = its recommended threshold
+    update_swing_hint()
+
+    btn_reset_swing = ft.IconButton(
+        icon=ft.Icons.RESTART_ALT,
+        icon_color=AppColors.PRIMARY,
+        tooltip="Use the recommended value for this experiment",
+        style=button_hover_style,
+        on_click=reset_swing
     )
 
     keep_positions_switch = ft.Switch(
@@ -160,6 +240,13 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
             page.update()
             return
 
+        swing_speed = read_swing()
+        if swing_speed is None:
+            status_text.value = "Please enter a valid swing speed threshold (0 or more)."
+            status_text.color = AppColors.ERROR
+            page.update()
+            return
+
         out_path = output_folder_path if output_folder_path else input_folder_path
         choice = cutoff_dropdown.value
         animal = animal_dropdown.value
@@ -180,7 +267,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         page.update()
 
         try:
-            process = await start_task("ex_filtering", [input_folder_path, choice, animal, experiment, camera, out_path, height_cutoff, keep_positions])
+            process = await start_task("ex_filtering", [input_folder_path, choice, animal, experiment, camera, out_path, height_cutoff, keep_positions, floor_dropdown.value, str(swing_speed)])
             process_manager.register(TASK_ID, "Data Filtering", process)
 
             line_count = 0
@@ -241,12 +328,41 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
 
     params_card = create_card(
         ft.Column([
-            ft.Row([cutoff_dropdown, animal_dropdown], spacing=15),
-            ft.Row([experiment_dropdown, camera_dropdown], spacing=15),
-            ft.Row([height_cutoff_switch, keep_positions_switch], spacing=15),
+            ft.Row([experiment_dropdown, animal_dropdown], spacing=15),
+            ft.Row([camera_dropdown, cutoff_dropdown], spacing=15),
+            hint("Movement window starts when the selected marker first moves and ends when the nose stops."),
         ], spacing=15),
-        title="Experiment Parameters",
-        icon=ft.Icons.TUNE
+        title="Experiment Setup",
+        icon=ft.Icons.SCIENCE
+    )
+
+    floor_card = create_card(
+        ft.Column([
+            ft.Row([floor_dropdown], spacing=15),
+            floor_hint,
+            height_cutoff_switch,
+        ], spacing=10),
+        title="Floor & Height Reference",
+        icon=ft.Icons.HEIGHT
+    )
+
+    swing_card = create_card(
+        ft.Column([
+            ft.Row([swing_input, btn_reset_swing], spacing=5, vertical_alignment=ft.CrossAxisAlignment.START),
+            swing_hint,
+        ], spacing=10),
+        title="Paw Swing Detection",
+        icon=ft.Icons.DIRECTIONS_RUN
+    )
+
+    output_card = create_card(
+        ft.Column([
+            keep_positions_switch,
+            hint("Kinematics are rebuilt from 'Positions (used)'. QC columns (tracked frames, step length SD, "
+                 "hind ahead of front) are added to every file."),
+        ], spacing=10),
+        title="Output",
+        icon=ft.Icons.SAVE_ALT
     )
 
     return ft.ListView([
@@ -255,6 +371,9 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         ft.Container(height=10),
         folder_card,
         params_card,
+        floor_card,
+        swing_card,
+        output_card,
         ft.Row([run_btn, stop_btn], spacing=10),
         progress_bar,
         terminal.get_control()

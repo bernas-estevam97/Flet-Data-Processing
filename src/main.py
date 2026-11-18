@@ -1,4 +1,3 @@
-import flet as ft
 import sys
 import os
 
@@ -7,6 +6,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import multiprocessing
 from process_manager import process_manager, task_main, RUN_TASK_FLAG, SEQUENTIAL_ENV
+
+if __name__ == "__main__":
+    # Children of the packed exe (pool workers, --run-task scripts) exit here,
+    # before flet and the UI views are imported: saves startup time per process.
+    multiprocessing.freeze_support()
+    if len(sys.argv) > 2 and sys.argv[1] == RUN_TASK_FLAG:
+        sys.exit(task_main(sys.argv[2])(sys.argv[2:]))
+
+import flet as ft
 from ui.theme import AppColors, button_hover_style
 from ui.views.tutorial_view import build_tutorial_view
 from ui.views.filtering_view import build_filtering_view
@@ -222,8 +230,4 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
-    # PyInstaller exe relaunched by start_task() to run a processing script instead of the GUI
-    if len(sys.argv) > 2 and sys.argv[1] == RUN_TASK_FLAG:
-        sys.exit(task_main(sys.argv[2])(sys.argv[2:]))
     ft.run(main)

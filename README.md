@@ -26,8 +26,11 @@ A built-in **Tutorial** page explains every option in detail.
 For each raw file (sheets `Positions (used)` and `Kinematics`), the app:
 
 - **Trims the trial.** It finds the frame where the animal starts moving, based on the cutoff point you choose: tail tip, tail center, tail base or both hind paws. It finds where movement stops from the nose position.
-- **Calibrates the values.** It applies the correct offset and inversion for the species (*Mus musculus* or *Acomys*), the test (groundwalk, beamwalk, gridwalk or swimming) and the camera setup (old or new).
-- **Applies the hind paw cutoff (optional).** It blanks out values after the hind paw reaches the height threshold.
+- **Rebuilds the kinematics.** It recalculates heights, distances, joint angles and paw speeds/accelerations (Savitzky-Golay) from the `Positions (used)` sheet. The original `Kinematics` sheet has outlier filtering that cuts swing peaks. Columns are matched by name, not position.
+- **Measures heights from the floor.** *Auto* (default) finds the floor in each file from the resting hind toe. *Fixed* uses the stored constant for the species (*Mus musculus* or *Acomys*), the test (groundwalk, beamwalk, gridwalk or swimming) and the camera setup (old or new).
+- **Applies the hind paw cutoff (optional).** It blanks out height values after the hind paw reaches the height threshold.
+- **Keeps swing frames only.** Paw speed and acceleration are kept only where the paw moves faster than the swing threshold (default 0.1 m/s; 0.03 m/s for beamwalk; 0 keeps every frame).
+- **Adds quality-control columns.** Tracked frames (%), hind paw ahead of front paw (%) and step length SD flag tracking problems.
 - **Calculates statistics.** It appends Mean, Std, Median, Min, Max, Max-Normalized Mean, CV and Time Duration.
 
 Files are processed in parallel on all CPU cores. If an output file already exists, the app skips it, so you can safely re-run an interrupted batch.
