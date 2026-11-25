@@ -91,6 +91,11 @@ def build_stats_view(page: ft.Page) -> ft.Control:
         tooltip="Averages trial files (_1, _2, etc.) sharing the same base subject ID"
     )
 
+    file_name_input = ft.TextField(
+        label="Output file name (optional)", hint_text="Default: EXPERIMENT_descriptive_statistics", suffix=".xlsx", expand=True,
+        tooltip="Name of the Excel file to create. Leave empty for the default name.\nCharacters \\ / : * ? \" < > | are removed."
+    )
+
     TASK_ID = "stats"
 
     terminal = TerminalWindow(page)
@@ -143,7 +148,7 @@ def build_stats_view(page: ft.Page) -> ft.Control:
         page.update()
 
         try:
-            process = await start_task("desc_analysis", [input_folder_path, out_path, experiment, should_group])
+            process = await start_task("desc_analysis", [input_folder_path, out_path, experiment, should_group, file_name_input.value or ""])
             process_manager.register(TASK_ID, "Descriptive Statistics", process)
 
             line_count = 0
@@ -197,6 +202,7 @@ def build_stats_view(page: ft.Page) -> ft.Control:
         ft.Column([
             ft.Row([btn_select_input, btn_reset_input, selected_input_txt], alignment=ft.MainAxisAlignment.START, spacing=10),
             ft.Row([btn_select_output, btn_reset_output, selected_output_txt], alignment=ft.MainAxisAlignment.START, spacing=10),
+            ft.Row([file_name_input]),
         ], spacing=10),
         title="Directory Configuration",
         icon=ft.Icons.FOLDER

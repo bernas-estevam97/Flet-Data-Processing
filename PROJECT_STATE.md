@@ -106,7 +106,7 @@ Flet-Data-Processing/
 - Each tag maps a filename code to a column (e.g. `WT` ➔ `Experimental Group`, `F` ➔ `Gender`). Tags are sent as JSON ordered by header creation order, which sets output column order.
 - Week parts like `44W` become a `Timepoint` column via `week_to_timepoint(weeks, start_week, interval)`: `(weeks - start_week) // interval + 1`. Defaults start 4W, every 4W (`44W` ➔ `11`, same as the old weeks / 4). Off-schedule weeks print a `[WARNING]`.
 - Schedule comes from the "Timepoint Schedule" card (first week, weeks between timepoints) with a live mapping preview.
-- CLI args: `input output experiment tags_json group(y/n) start_week interval` (last two optional, default 4 4). `python desc_analysis_aio.py --selftest` checks the timepoint mapping.
+- CLI args: `input output experiment tags_json group(y/n) start_week interval file_name` (last three optional, default 4 4 and default name). `python desc_analysis_aio.py --selftest` checks the timepoint mapping.
 - Optional grouping averages trials sharing Id, tags and timepoint.
 
 ### H. Tutorial Page
@@ -137,5 +137,6 @@ Update dependencies with `uv add` (not by hand) so `pyproject.toml` and `uv.lock
 ## 5. Notes for Future Agents / Continuation
 - Entry point: `src/main.py`. Processing scripts live directly in `src/` and expose `main(argv)`; register new ones in `task_main()` with a static import so PyInstaller bundles them.
 - New pool-based scripts should use `worker_count()` and fall back to `ThreadPoolExecutor` when `can_spawn_processes()` is False.
+- Output file name: both stats views have an optional "Output file name" field. `desc_analysis.py` takes it as argv[5], `desc_analysis_aio.py` as argv[8]. Forbidden Windows characters and a typed `.xlsx` are stripped; empty falls back to `<EXPERIMENT>_descriptive_statistics.xlsx` / `<EXPERIMENT>_AIO_descriptive_statistics.xlsx`.
 - `ex_filtering.py`, `desc_analysis.py` and `desc_analysis_aio.py` also run standalone with interactive prompts when no arguments are given.
 - Keep the tutorial page and this file in sync with feature changes.

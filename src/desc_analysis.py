@@ -103,6 +103,7 @@ def extract_data_from_excel(file_path):
 def main(argv=None):
     argv = sys.argv if argv is None else argv
     should_group = False
+    file_name = ""
     
     # --- 1. Catch variables from Flet via argv ---
     if len(argv) > 1:
@@ -112,6 +113,8 @@ def main(argv=None):
         
         if len(argv) > 4:
             should_group = str(argv[4]).strip().lower() in ['y', 'yes', 'true', '1']
+        if len(argv) > 5:
+            file_name = argv[5]
 
         print(f"[START] Running Data Compilation...")
         print(f"[PATH] Input Folder: {folder_input}")
@@ -146,6 +149,7 @@ def main(argv=None):
         print("WARNING: To successfully group trials into a mean, your data files MUST have the exact same base name followed by different trial numbers.")
         group_choice = input("Do you want to group the means according to the detected IDs? (y/n): ").strip().lower()
         should_group = group_choice in ['y', 'yes']
+        file_name = input('Output file name (leave empty for default): ')
 
     # --- 3. GET FILES ---
     file_paths = sorted([
@@ -197,7 +201,9 @@ def main(argv=None):
         if res['duration_val'] is not None:
             compiled_durations.append([current_id, res['duration_val']])
 
-    output_filename = f'{experiment_name.upper()}_descriptive_statistics.xlsx'
+    # Drop characters Windows forbids in file names and any typed .xlsx extension
+    file_name = re.sub(r'\.xlsx$', '', re.sub(r'[\\/:*?"<>|]', '', file_name).strip(), flags=re.I)
+    output_filename = f'{file_name or experiment_name.upper() + "_descriptive_statistics"}.xlsx'
     output_path = os.path.join(folder_output, output_filename)
     temp_path = os.path.join(folder_output, f"~${os.path.basename(output_path)}")
 

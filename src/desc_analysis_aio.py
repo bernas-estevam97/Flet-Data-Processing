@@ -147,6 +147,7 @@ def main(argv=None):
     should_group = False
     user_tags = {}
     start_week, interval = 4, 4
+    file_name = ""
 
     # --- 1. Catch variables from Flet via argv ---
     if len(argv) > 1:
@@ -168,6 +169,8 @@ def main(argv=None):
                 start_week = int(argv[6])
             if len(argv) > 7 and argv[7].strip():
                 interval = int(argv[7])
+            if len(argv) > 8:
+                file_name = argv[8]
         except ValueError:
             print("[ERROR] First timepoint and interval must be whole numbers of weeks.")
             return 1
@@ -223,6 +226,7 @@ def main(argv=None):
         except ValueError:
             print('[ERROR] Weeks must be whole numbers.')
             return
+        file_name = input('Output file name (leave empty for default): ')
 
     if interval < 1:
         print("[ERROR] Interval between timepoints must be at least 1 week.")
@@ -291,7 +295,9 @@ def main(argv=None):
         if res['duration_val'] is not None:
             compiled_durations.append([current_id] + tag_values_row + [res['duration_val']])
 
-    output_filename = f'{experiment_name.upper()}_AIO_descriptive_statistics.xlsx'
+    # Drop characters Windows forbids in file names and any typed .xlsx extension
+    file_name = re.sub(r'\.xlsx$', '', re.sub(r'[\\/:*?"<>|]', '', file_name).strip(), flags=re.I)
+    output_filename = f'{file_name or experiment_name.upper() + "_AIO_descriptive_statistics"}.xlsx'
     output_path = os.path.join(folder_output, output_filename)
     temp_path = os.path.join(folder_output, f"~${os.path.basename(output_path)}")
 

@@ -251,6 +251,11 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         tooltip="Averages trial files sharing base subject ID and identified tags"
     )
 
+    file_name_input = ft.TextField(
+        label="Output file name (optional)", hint_text="Default: TAGGED_EXPERIMENT_AIO_descriptive_statistics", suffix=".xlsx", expand=True,
+        tooltip="Name of the Excel file to create. Leave empty for the default name.\nCharacters \\ / : * ? \" < > | are removed."
+    )
+
     TASK_ID = "stats_aio"
 
     terminal = TerminalWindow(page)
@@ -313,7 +318,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         page.update()
 
         try:
-            process = await start_task("desc_analysis_aio", [input_folder_path, out_path, "Tagged_Experiment", tags_json_string, should_group, str(start_week), str(interval)])
+            process = await start_task("desc_analysis_aio", [input_folder_path, out_path, "Tagged_Experiment", tags_json_string, should_group, str(start_week), str(interval), file_name_input.value or ""])
             process_manager.register(TASK_ID, "AIO Statistics", process)
 
             line_count = 0
@@ -367,6 +372,7 @@ def build_stats_aio_view(page: ft.Page) -> ft.Control:
         ft.Column([
             ft.Row([btn_select_input, btn_reset_input, selected_input_txt], alignment=ft.MainAxisAlignment.START, spacing=10),
             ft.Row([btn_select_output, btn_reset_output, selected_output_txt], alignment=ft.MainAxisAlignment.START, spacing=10),
+            ft.Row([file_name_input]),
         ], spacing=10),
         title="Directory Configuration",
         icon=ft.Icons.FOLDER

@@ -97,6 +97,7 @@ These values were tuned on about 800 files across groundwalk, gridwalk and beam 
                 """
 1. **Select Filtered Data Folder**: Choose the directory containing your `_filtered.xlsx` files from Step 1.
 2. **Select Output Folder (Optional)**: Choose destination for the summary statistics workbook.
+   - **Output file name (optional)**: Name the workbook. Leave empty for `EXPERIMENT_descriptive_statistics.xlsx`.
 3. **Experiment Name**: Label your experiment type for file naming.
 4. **Group Trials (Calculate Means)**: 
    - **Enabled**: Automatically detects trial numbers (e.g. `_1`, `_2`) and computes subject averages.
@@ -135,7 +136,7 @@ These values were tuned on about 800 files across groundwalk, gridwalk and beam 
 |---|---|---|---|---|---|
 | 2199_1R | WT | F | BEAM | 11 | ... |
 
-5. **Select Filtered Folder**: Choose the folder containing your `_filtered.xlsx` files.
+5. **Select Filtered Folder**: Choose the folder containing your `_filtered.xlsx` files. Optionally type an **Output file name**; leave it empty for `TAGGED_EXPERIMENT_AIO_descriptive_statistics.xlsx`.
 6. **Group Trials by ID & Tags**: Averages trials (`_01`, `_02`, ...) that share the same Id, tags and timepoint into one row.
 7. **Run**: Click **Run Descriptive AIO Statistics** to export tagged summary workbooks.
                 """,
