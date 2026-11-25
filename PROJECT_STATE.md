@@ -1,6 +1,6 @@
 # MotoRater Data Processing App - Project State & Cold Memory Checkpoint
 
-> **Date Updated**: November 18, 2026
+> **Date Updated**: November 25, 2026
 > **Status**: Fully operational
 > **Environment**: Python 3.10+ managed by `uv` (`.venv`, `uv.lock`)
 > **Framework**: Flet 1.0.4 (Desktop UI) | Pandas | SciPy | rustpy-xlsxwriter
@@ -9,7 +9,7 @@
 
 ## 1. Project Overview
 
-The **MotoRater Data Processing & Analysis Application** is a modular desktop GUI app built with Python and Flet. It processes kinematic data output from MotoRater experimental hardware by bulk-filtering raw Excel workbooks, extracting descriptive statistical metrics (Mean, Std, Median, Min, Max, Max_Normalized_Mean, CV, Time Duration), supporting dynamic filename tag parsing, and merging multi-sheet Excel files.
+The **MotoRater Data Processing & Analysis Application** is a modular desktop GUI app built with Python and Flet. It processes kinematic data output from MotoRater experimental hardware by bulk-filtering raw Excel workbooks, extracting descriptive statistical metrics (Mean, Std, Median, Min, Max, IQR, P5-P95 Range, Time Duration), supporting dynamic filename tag parsing, and merging multi-sheet Excel files.
 
 ---
 
@@ -25,6 +25,7 @@ Flet-Data-Processing/
 ├── src/
 │   ├── main.py                 # Entry point: layout, NavigationRail, sidebar controls, --run-task dispatch
 │   ├── process_manager.py      # Task launching (subprocess or in-process thread), force stop, worker_count()
+│   ├── filter_settings.py      # v2 filter constants + settings_rows() (no heavy imports; shared by ex_filtering and the UI)
 │   ├── ex_filtering.py         # Raw data filtering v2 (kinematics rebuilt from positions, auto floor, swing threshold, QC columns)
 │   ├── desc_analysis.py        # Descriptive statistics (subject trial grouping, metric calculations)
 │   ├── desc_analysis_aio.py    # Tagged statistics (filename tag parser, Timepoint from week tags via configurable start week + interval)
@@ -35,7 +36,7 @@ Flet-Data-Processing/
 │   │   ├── terminal.py         # Live log terminal with text selection & Copy Logs button
 │   │   └── views/
 │   │       ├── tutorial_view.py  # In-app guide (Steps 1-4, Sidebar Controls, help card with website link)
-│   │       ├── filtering_view.py # Filtering UI (Experiment Setup, Floor & Height, Paw Swing, Output cards)
+│   │       ├── filtering_view.py # Filtering UI (Experiment Setup, Floor & Height + conditional Camera, Paw Swing, Output, read-only Advanced Filter Settings)
 │   │       ├── stats_view.py     # Descriptive statistics UI (grouping switch)
 │   │       ├── stats_aio_view.py # AIO statistics UI (column headers, tag dropdown, timepoint schedule)
 │   │       └── merge_view.py     # Excel merger UI (selected files list with per-file remove)
@@ -88,7 +89,9 @@ Flet-Data-Processing/
 - `kinematics_from_positions()` rebuilds every Kinematics column with a known formula (`Y_METRICS`, `DIST_METRICS`, `ANGLE_METRICS`, paw `Vx/Vy/Speed/Ax/Ay/|Acc|` via Savitzky-Golay window 5 order 2) from `Positions (used)`. The source sheet's MAD outlier filter cuts swing peaks. Columns without a formula are kept from the sheet and listed as a warning.
 - Height/Clearance/Drag columns are found by name (`height_columns()`); upside-down (right) view = column mean > 0.3.
 - Floor: `auto` = 10th percentile of left hind toe Y (90th of |right|) inside the movement window (before the height cutoff); `fixed` = `SUBTRACTION_MAP` / `OFFSET_MAP`.
-- Swing threshold: paw kinematic values are blanked where that paw's speed <= threshold. Defaults `SWING_SPEED_BY_EXPERIMENT` (groundwalk/gridwalk 0.1, beamwalk 0.03, else 0.1). The UI duplicates these defaults in `filtering_view.py` to avoid importing pandas/scipy at startup; keep both in sync.
+- Swing threshold: paw kinematic values are blanked where that paw's speed <= threshold. Defaults `SWING_SPEED_BY_EXPERIMENT` (groundwalk/gridwalk 0.1, beamwalk 0.03, else 0.1). All v2 constants (swing defaults, jump/spike/body-check limits, nose exit rules, floor percentile, warning thresholds, `HEIGHT_CUTOFF_X`) live in `filter_settings.py`, imported by both `ex_filtering.py` and the UI, so they cannot drift. `settings_rows(animal)` feeds the Advanced Filter Settings panel and the Tutorial table.
+- Stats rows: Mean, Std, Median, Min, Max, `IQR`, `P5-P95 Range` (replaced Max_Normalized_Mean and CV on Nov 25, 2026: ratio stats are invalid for signed/near-zero data). `desc_analysis*.py` read rows by name (`iqr`, `p5-p95 range`).
+- UI: Camera Settings sits in the Floor card and is visible only when floor = fixed (it only selects `SUBTRACTION_MAP` / `OFFSET_MAP` keys). Height cutoff: right hind toe (`/Feature/Paw/Tao/Hind/Right_X`) X >= `HEIGHT_CUTOFF_X` (-0.020 m), same for both cameras (Nov 25, 2026; was left toe, -0.016 old / 0 new). Species and Experiment stay in Experiment Setup (they set the jump limit and swing default in auto mode too).
 - QC columns per file: `QC Tracked Frames (%)`, `QC Hind Ahead of Front (%)`, `QC Step Length SD (Left/Right) (m)`.
 - CLI args: `input choice animal experiment old/new output height_cutoff keep_positions floor_mode(auto/fixed) swing_speed` (last two optional; empty swing = experiment default).
 - Original standalone `optimized_excel_filtering_v2.py` (repo root, untracked) gives identical Kinematics output; verified on 6 SCA2-Q129 beam/footprint files.

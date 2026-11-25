@@ -1,5 +1,6 @@
 import flet as ft
 from ui.theme import AppColors, create_card, button_hover_style
+from filter_settings import settings_rows, HEIGHT_CUTOFF_X, mm
 
 def build_tutorial_view(page: ft.Page) -> ft.Control:
     header_section = ft.Column([
@@ -27,18 +28,57 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
 2. **Select Output Folder (Optional)**: Choose where cleaned `_filtered.xlsx` files will be saved (defaults to input folder).
 3. **Experiment Setup**:
    - **Experiment Type**: Select Groundwalk, Gridwalk, Beamwalk, or Swimming.
-   - **Animal Species**: Select *Mus Musculus* or *Acomys*.
-   - **Camera Settings**: Select Old vs New camera setup.
-   - **Cutoff Starts Where?**: The marker that marks the start of movement (Tail Tip, Tail Center, Tail Base, or Both Paws). Movement ends when the nose stops.
+   - **Animal Species**: Select *Mus Musculus* or *Acomys*. Also sets the tracking jump limit (see **How Filtering Cleans Your Data** below).
+   - **Cutoff Starts Where?**: The marker that marks the start of movement (Tail Tip, Tail Center, Tail Base, or Both Paws). Movement ends when the nose reaches its exit position.
 4. **Floor & Height Reference**:
-   - **Floor Reference**: *Auto* measures the floor in each file from the resting hind toe, so heights stay correct when the setup moves between sessions. *Fixed* uses the stored constant for the selected species, experiment and camera.
-   - **Hind Paw Height Cutoff**: Blanks height, clearance and drag values after the hind paw passes the camera threshold.
+   - **Floor Reference**: *Auto* (recommended) measures the floor in each file from the resting hind toe, so heights stay correct when the setup moves between sessions. *Fixed* uses the stored constant for the selected species, experiment and camera.
+   - **Camera Settings**: Old vs New camera setup. Shown only with a *Fixed* floor, where it selects the stored constant.
+   - **Hind Paw Height Cutoff**: Blanks height, clearance and drag values once the right hind toe reaches X = """ + mm(HEIGHT_CUTOFF_X) + """.
 5. **Paw Swing Detection**:
-   - **Swing Speed Threshold (m/s)**: Paw speed and acceleration are kept only for frames where that paw moves faster than this value (swing phase). The recommended value fills in when you pick the experiment (Groundwalk/Gridwalk 0.1, Beamwalk 0.03). Use the reset button to restore it. Enter **0** to keep every frame.
+   - **Swing Speed Threshold (m/s)**: Paw speed and acceleration are kept only for frames where that paw moves faster than this value (swing phase). The recommended value fills in when you pick the experiment or species (Groundwalk/Gridwalk 0.1, Beamwalk 0.03). Use the reset button to restore it. Enter **0** to keep every frame.
 6. **Output**:
    - **Keep Positions Sheet**: Copies the raw `Positions (used)` sheet into each filtered file. Turn off for about 2x faster filtering when you don't need the positions.
    - Kinematics are rebuilt from the `Positions (used)` sheet, and quality-control columns (`QC Tracked Frames (%)`, `QC Hind Ahead of Front (%)`, `QC Step Length SD`) are added to every file.
-7. **Run**: Click **Run Data Filtering**. Files are processed in the background with live log feedback (in parallel or one at a time, see **Sidebar Controls** below). Already filtered files will automatically skip to save time.
+7. **Advanced Filter Settings**: Expand this card to see the fixed v2 values used to clean the data. They are read-only (see **How Filtering Cleans Your Data** below).
+8. **Run**: Click **Run Data Filtering**. Files are processed in the background with live log feedback (in parallel or one at a time, see **Sidebar Controls** below). Already filtered files will automatically skip to save time.
+                """,
+                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
+            )
+        ], spacing=10)
+    )
+
+    mus, aco = settings_rows("0"), settings_rows("1")
+    settings_table = "| Group | Setting | Mus | Acomys | What it does |\n|---|---|---|---|---|\n" + "\n".join(
+        f"| {g} | {name} | {v0} | {v1} | {meaning} |"
+        for (g, name, v0, meaning), (_, _, v1, _) in zip(mus, aco))
+
+    pipeline_card = create_card(
+        ft.Column([
+            ft.ListTile(
+                leading=ft.Icon(ft.Icons.CLEANING_SERVICES, size=28, color=AppColors.PRIMARY),
+                title=ft.Text("How Filtering Cleans Your Data", weight=ft.FontWeight.BOLD, size=18, color=AppColors.TEXT_MAIN),
+                subtitle=ft.Text("Every step applied to each file, in order, and the fixed values behind it.", color=AppColors.TEXT_MUTED)
+            ),
+            ft.Divider(color=AppColors.BORDER),
+            ft.Markdown(
+                """
+1. **Movement window**: Starts when the selected start marker first moves away from its parked position. Ends at the first frame the nose reaches its exit position, or stops being tracked near the exit.
+2. **Placeholders removed**: When the tracker loses a marker it repeats the last position. Frames where a marker's X and Y repeat exactly are removed from every measurement.
+3. **Implausible positions removed**:
+   - **Body checks** remove the whole frame: nose behind a hind paw, hind paw well ahead of the front paw (label swap), or body length far from the session median.
+   - **Jumps** remove one marker in one frame: it moved further than a paw can in one frame.
+   - **Spikes** remove one-frame out-and-back jitter (common on the beam). Tail markers are skipped because the tail really whips that fast.
+4. **Kinematics rebuilt**: Every measurement with a known formula (heights, distances, angles, paw speed and acceleration) is recomputed from the cleaned `Positions (used)` sheet. Paw speed and acceleration use a Savitzky-Golay derivative (window 5, order 2). Columns without a formula are kept from the `Kinematics` sheet and listed in the log.
+5. **Floor and heights**: Heights are measured from the floor (Auto or Fixed). The optional height cutoff blanks heights once the right hind toe reaches X = """ + mm(HEIGHT_CUTOFF_X) + """.
+6. **Swing only**: Paw speed and acceleration are kept only above the swing speed threshold.
+7. **Quality control**: `QC` columns are added, and the log flags files that need checking ("CHECK THIS VIDEO", low tracking).
+8. **Statistics**: Mean, Std, Median, Min, Max, IQR, P5-P95 Range and Time Duration are added below the data.
+
+**Fixed settings** (also shown in the Filtering tab under *Advanced Filter Settings*):
+
+""" + settings_table + """
+
+These values were tuned on about 800 files across groundwalk, gridwalk and beam sessions. Acomys values other than the jump limit are provisional until more Acomys sessions are tested. Each file's log entry lists what was removed and why.
                 """,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
             )
@@ -61,7 +101,10 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
 4. **Group Trials (Calculate Means)**: 
    - **Enabled**: Automatically detects trial numbers (e.g. `_1`, `_2`) and computes subject averages.
    - **Disabled**: Preserves each trial row individually without subject averaging.
-5. **Run**: Click **Run Descriptive Statistics** to generate an Excel workbook with sheets for `Mean`, `Std`, `Median`, `Min`, `Max`, `Max_Normalized_Mean`, `CV`, and `Time Duration`.
+5. **Run**: Click **Run Descriptive Statistics** to generate an Excel workbook with sheets for `Mean`, `Std`, `Median`, `Min`, `Max`, `IQR`, `P5-P95 Range`, and `Time Duration`.
+   - **IQR** (Q3 − Q1): spread of the middle 50% of frames.
+   - **P5-P95 Range** (P95 − P5): amplitude of the middle 90% of frames, e.g. range of motion or swing height.
+   - Both are in the column's own units, valid for negative and near-zero values (floor-referenced heights, Vx/Vy, accelerations), and not driven by a single extreme frame or by trial length. They replace `Max_Normalized_Mean` and `CV`, which divide by the max or mean and break down for such data. Files filtered before this change still carry the old rows: filter them again to get the new sheets.
                 """,
                 extension_set=ft.MarkdownExtensionSet.GITHUB_WEB
             )
@@ -164,13 +207,18 @@ def build_tutorial_view(page: ft.Page) -> ft.Control:
         ], spacing=10)
     )
 
-    return ft.ListView([
-        header_section,
-        ft.Container(height=5),
-        step1_card,
-        step2_card,
-        step3_card,
-        step4_card,
-        sidebar_controls_card,
-        admin_support_card
-    ], spacing=15, padding=20)
+    # Column, not ListView: ListView builds cards lazily and re-estimates the page height while scrolling past
+    # cards of very different heights, so the scrollbar thumb keeps resizing. 8 cards: laying out all is cheap.
+    return ft.Column([
+        ft.Container(ft.Column([
+            header_section,
+            ft.Container(height=5),
+            step1_card,
+            pipeline_card,
+            step2_card,
+            step3_card,
+            step4_card,
+            sidebar_controls_card,
+            admin_support_card
+        ], spacing=15), padding=20)
+    ], scroll=ft.ScrollMode.AUTO, expand=True)

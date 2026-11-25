@@ -65,37 +65,11 @@ OFFSET_MAP = {
     ("0", "swimming", "new"): 0.036,
 }
 
-# --- v2 SETTINGS ---
-SWING_SPEED_DEFAULT = 0.1    # m/s; paw speed above this = swing. 0 keeps every frame (stance included)
-# Per-experiment defaults, from v2 (Savitzky-Golay) paw speed histograms on 15 SCA2-Q129 sessions per test:
-# groundwalk/gridwalk speeds are bimodal (jitter ~0.02, swing ~0.5-0.6) with the valley at 0.08-0.126 -> 0.1.
-# beamwalk has one broad peak (~0.06-0.1, slow gripping/sliding), no valley -> 0.03 only removes jitter.
-# swimming not measured -> SWING_SPEED_DEFAULT.
-SWING_SPEED_BY_EXPERIMENT = {"groundwalk": 0.1, "gridwalk": 0.1, "beamwalk": 0.03}
-# Per species ("0" = Mus, "1" = Acomys). Acomys values are PROVISIONAL (same as Mus): resting Acomys paws jitter
-# more (~0.05 m/s vs ~0.02) and swing is faster (0.5-1.3 m/s), so 0.15-0.2 may suit them better once more
-# Acomys sessions have been tested (only 9 groundwalk sessions so far).
-SWING_SPEED_BY_SPECIES = {"0": SWING_SPEED_BY_EXPERIMENT,
-                          "1": {"groundwalk": 0.1, "gridwalk": 0.1, "beamwalk": 0.03}}
-FLOOR_PCT = 10               # floor = 10th percentile of left hind toe Y (90th in the upside-down right view)
-FROZEN_MIN_REPEATS = 1      # a marker whose X and Y repeat EXACTLY for this many frames is a tracker placeholder
-                             # (real smoothed positions always change a little, even on a resting paw)
-# Implausible-position checks (v2). Real paw moves in a clean session: <= ~18 mm/frame; tracking jumps: 40-65 mm.
-NOSE_EXIT_TOL = 0.001        # m; the window ends at the first frame the nose is this close to its exit (final) X...
-NOSE_HOLD_FRAMES = 5         # ...or at the first frame the nose freezes for this many frames (stopped being tracked)
-NOSE_EXIT_ZONE = 0.02        # m; ...but only a freeze this close to the exit counts (mid-walk freezes, e.g. the nose
-                             # hidden by the beam, are placeholders, not the end of the trial)
-MAX_JUMP_M = 0.03            # m per frame (3 m/s at 100 fps); a measured marker moving more than this = tracking jump
-MAX_JUMP_BY_SPECIES = {"0": 0.03,   # Mus: real paw moves <= ~25 mm/frame; fake jumps from ~25-40 mm
-                       "1": 0.04}   # Acomys: faster, real smooth swings reach ~31 mm/frame
-START_MOVE_TOL = 0.005       # m; the start marker must move this far from its first value to count as appearing
-                             # (a parked placeholder can drift by ~1 mm before the animal enters, e.g. Acomys clips)
-HIND_AHEAD_TOL = 0.01        # m; hind paw more than this ahead of the front paw on the same side = label swap
-BODY_LENGTH_RANGE = (0.7, 1.3)  # nose-tail base distance allowed, as a fraction of the session median
-MAX_BAD_FRACTION = 0.2       # more of the window than this failing the body checks = nose track broken: warn
-SPIKE_MAX_M = 0.008          # m; a marker that jumps out and straight back by more than this in one frame = jitter
-                             # (805-file test: footprint never exceeds ~6 mm; beam jitter reaches 20 mm)
-MIN_TRACKED_PCT = 70         # warn when fewer than this % of the window frames have all four paws tracked
+# --- v2 SETTINGS --- (values and their reasons live in filter_settings.py, shared with the Filtering tab)
+from filter_settings import (SWING_SPEED_DEFAULT, FLOOR_PCT, FROZEN_MIN_REPEATS, NOSE_EXIT_TOL, NOSE_HOLD_FRAMES,
+                             NOSE_EXIT_ZONE, MAX_JUMP_M, START_MOVE_TOL, HIND_AHEAD_TOL, BODY_LENGTH_RANGE,
+                             MAX_BAD_FRACTION, SPIKE_MAX_M, MIN_TRACKED_PCT, HEIGHT_CUTOFF_X,
+                             default_swing_speed, max_jump)
 
 # --- Kinematics rebuilt from 'Positions (used)' ---
 # The calculations_*.py scripts run remove_outliers() (median/MAD z-score) on every metric before saving the
@@ -250,12 +224,6 @@ def walking_direction(pos, last_index):
     if len(mean_x) < 2 or mean_x.iloc[-1] == mean_x.iloc[0]:
         return 1.0
     return float(np.sign(mean_x.iloc[-1] - mean_x.iloc[0]))
-
-
-def default_swing_speed(animal_choice, experiment):
-    """Default swing speed threshold (m/s) for a species ("0" Mus, "1" Acomys) and test."""
-    table = SWING_SPEED_BY_SPECIES.get(str(animal_choice), SWING_SPEED_BY_EXPERIMENT)
-    return table.get(experiment, SWING_SPEED_DEFAULT)
 
 
 def mask_implausible(pos, last_index, max_jump=MAX_JUMP_M):
@@ -452,7 +420,7 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             #      detection keep the raw values (the start rule relies on the tail tip's placeholder).
             pos_holds, held = mask_placeholders(df_raw_clean)
             pos_real, implausible, jumps, spikes = mask_implausible(
-                pos_holds, last_index, MAX_JUMP_BY_SPECIES.get(str(animal_choice), MAX_JUMP_M))
+                pos_holds, last_index, max_jump(animal_choice))
             raw_win_real = pos_real.iloc[start_index : last_index + 1]
             df_kin_full, kept = kinematics_from_positions(pos_real, df_kin_clean)
             if kept:
@@ -462,10 +430,9 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             # Height cutoff time: heights are only kept before the hind paw reaches this X
             hind_timestamp = None
             if is_yes(height_cutoff):
-                hind_paw_col = '/Feature/Paw/Tao/Hind/Left_X'
+                hind_paw_col = '/Feature/Paw/Tao/Hind/Right_X'
                 if hind_paw_col in df_raw_clean.columns and 'Time' in df_raw_clean.columns:
-                    threshold_val = 0 if old_or_new == "new" else -0.016
-                    hind_reach = df_raw_clean[df_raw_clean[hind_paw_col] >= threshold_val]
+                    hind_reach = df_raw_clean[df_raw_clean[hind_paw_col] >= HEIGHT_CUTOFF_X]
                     if not hind_reach.empty:
                         hind_timestamp = df_raw_clean.loc[hind_reach.index[0], "Time"]
             
@@ -605,36 +572,16 @@ def filter_excel_by_column(file_info_tuple, choice, animal_choice, experiment, o
             height_window = (height_times.iloc[0], height_times.iloc[-1]) if not height_times.empty else (np.nan, np.nan)
             stats_cols = [col for col in df_kin_filtered.columns if col != 'Time']
             
-            def max_norm_mean(col):
-                clean_col = col.dropna()
-                if clean_col.empty:
-                    return np.nan
-                max_val = clean_col.max()
-                if pd.isna(max_val) or max_val == 0:
-                    return np.nan
-                return (clean_col / max_val).mean()
+            # IQR and P5-P95 Range replace Max_Normalized_Mean and CV: both divided by the max/mean, which is
+            # meaningless for signed or near-zero data (floor-referenced heights, Vx/Vy, Ax/Ay, head rotation).
+            # Percentile spreads are in the column's units and, unlike Max - Min, do not grow with trial length.
+            cols = df_kin_filtered[stats_cols]
+            q = cols.quantile([0.05, 0.25, 0.75, 0.95])
+            stats_block = cols.agg(['mean', 'std', 'median', 'min', 'max'])
+            stats_block.index = [str(i).title() for i in stats_block.index]
+            stats_block.loc['IQR'] = q.loc[0.75] - q.loc[0.25]
+            stats_block.loc['P5-P95 Range'] = q.loc[0.95] - q.loc[0.05]
 
-            def coef_var(col):
-                clean_col = col.dropna()
-                if clean_col.empty:
-                    return np.nan
-                mean_val = clean_col.mean()
-                if pd.isna(mean_val) or mean_val == 0:
-                    return np.nan
-                return clean_col.std() / mean_val
-            
-            stats_block = df_kin_filtered[stats_cols].agg(['mean', 'std', 'median', 'min', 'max', max_norm_mean, coef_var])
-            
-            formatted_index = []
-            for idx in stats_block.index:
-                if idx == 'max_norm_mean':
-                    formatted_index.append('Max_Normalized_Mean')
-                elif idx == 'coef_var':
-                    formatted_index.append('CV')
-                else:
-                    formatted_index.append(str(idx).title())
-            stats_block.index = formatted_index
-            
             stats_output = stats_block.reset_index()
             stats_output.columns = [df_kin_filtered.columns[0]] + list(stats_cols)
 

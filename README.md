@@ -27,17 +27,18 @@ For each raw file (sheets `Positions (used)` and `Kinematics`), the app:
 
 - **Trims the trial.** It finds the frame where the animal starts moving, based on the cutoff point you choose: tail tip, tail center, tail base or both hind paws. It finds where movement stops from the nose position.
 - **Rebuilds the kinematics.** It recalculates heights, distances, joint angles and paw speeds/accelerations (Savitzky-Golay) from the `Positions (used)` sheet. The original `Kinematics` sheet has outlier filtering that cuts swing peaks. Columns are matched by name, not position.
-- **Measures heights from the floor.** *Auto* (default) finds the floor in each file from the resting hind toe. *Fixed* uses the stored constant for the species (*Mus musculus* or *Acomys*), the test (groundwalk, beamwalk, gridwalk or swimming) and the camera setup (old or new).
-- **Applies the hind paw cutoff (optional).** It blanks out height values after the hind paw reaches the height threshold.
+- **Measures heights from the floor.** *Auto* (default) finds the floor in each file from the resting hind toe. *Fixed* uses the stored constant for the species (*Mus musculus* or *Acomys*), the test (groundwalk, beamwalk, gridwalk or swimming) and the camera setup (old or new). The camera setting appears only with a *Fixed* floor.
+- **Applies the hind paw cutoff (optional).** It blanks out height values once the right hind toe reaches X = −20 mm (same for both camera setups).
 - **Keeps swing frames only.** Paw speed and acceleration are kept only where the paw moves faster than the swing threshold (default 0.1 m/s; 0.03 m/s for beamwalk; 0 keeps every frame).
 - **Adds quality-control columns.** Tracked frames (%), hind paw ahead of front paw (%) and step length SD flag tracking problems.
-- **Calculates statistics.** It appends Mean, Std, Median, Min, Max, Max-Normalized Mean, CV and Time Duration.
+- **Removes bad positions.** Tracker placeholders (frozen markers), tracking jumps, one-frame jitter spikes and frames that fail body checks (nose behind a hind paw, hind/front label swaps, implausible body length) are removed before any measurement. The fixed values are shown, read-only, under *Advanced Filter Settings* in the Filtering tab and explained in the Tutorial. They live in `src/filter_settings.py`.
+- **Calculates statistics.** It appends Mean, Std, Median, Min, Max, IQR (Q3 − Q1), P5-P95 Range (P95 − P5) and Time Duration. IQR and P5-P95 Range replace Max-Normalized Mean and CV, which divide by the max or mean and are not valid for signed or near-zero data such as floor-referenced heights and velocities.
 
 Files are processed in parallel on all CPU cores. If an output file already exists, the app skips it, so you can safely re-run an interrupted batch.
 
 ### 2. Statistics
 
-This tool collects the statistics from every filtered file into one Excel workbook. It creates one sheet per statistic (`Mean`, `Std`, `Median`, `Min`, `Max`, `Max_Normalized_Mean`, `CV`, `Time Duration`). You can average the repeated trials of each subject (`_1`, `_2`, …) or keep each trial as its own row.
+This tool collects the statistics from every filtered file into one Excel workbook. It creates one sheet per statistic (`Mean`, `Std`, `Median`, `Min`, `Max`, `IQR`, `P5-P95 Range`, `Time Duration`). Files filtered before the IQR/P5-P95 change still carry the old rows; filter them again to get the new sheets. You can average the repeated trials of each subject (`_1`, `_2`, …) or keep each trial as its own row.
 
 ### 3. Statistics – AIO (All-In-One)
 

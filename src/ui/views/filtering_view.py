@@ -2,6 +2,7 @@ import flet as ft
 from ui.theme import AppColors, create_card, button_hover_style, primary_button_style, danger_button_style
 from ui.terminal import TerminalWindow
 from process_manager import process_manager, start_task
+from filter_settings import default_swing_speed, settings_rows, HEIGHT_CUTOFF_X, mm
 
 def build_filtering_view(page: ft.Page) -> ft.Control:
     status_text = ft.Text("System Ready", color=AppColors.TEXT_MUTED, size=14)
@@ -130,26 +131,23 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         else:
             floor_hint.value = ("Uses the stored constant for the selected species, experiment and camera "
                                 "settings. Combinations without a constant are left as is.")
+        camera_dropdown.visible = floor_dropdown.value == "fixed"  # camera only selects the fixed constants
         if e is not None:
             page.update()
-
-    floor_dropdown.on_select = update_floor_hint
-    update_floor_hint()
 
     height_cutoff_switch = ft.Switch(
         label="Apply Hind Paw Height Cutoff",
         value=False,
         active_color=AppColors.PRIMARY,
-        tooltip="Blank height, clearance and drag values after the hind paw passes the camera threshold"
+        tooltip=f"Blank height, clearance and drag values once the right hind toe reaches X = {mm(HEIGHT_CUTOFF_X)}"
     )
 
-    # --- Paw swing detection ---
-    # Keep in sync with SWING_SPEED_BY_EXPERIMENT / SWING_SPEED_DEFAULT in ex_filtering.py
-    # (not imported here so the UI does not load pandas/scipy at startup).
-    swing_defaults = {"groundwalk": 0.1, "gridwalk": 0.1, "beamwalk": 0.03}
+    floor_dropdown.on_select = update_floor_hint
+    update_floor_hint()
 
+    # --- Paw swing detection ---
     def default_swing():
-        return str(swing_defaults.get(experiment_dropdown.value, 0.1))
+        return str(default_swing_speed(animal_dropdown.value, experiment_dropdown.value))
 
     swing_input = ft.TextField(
         label="Swing Speed Threshold", value=default_swing(), width=220,
@@ -188,6 +186,31 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
     swing_input.on_change = update_swing_hint
     experiment_dropdown.on_select = reset_swing  # new experiment = its recommended threshold
     update_swing_hint()
+
+    # --- Advanced filter settings (read-only, from filter_settings.py) ---
+    advanced_rows = ft.Column(spacing=6)
+
+    def update_advanced(e=None):
+        rows, group = [], None
+        for g, name, value, meaning in settings_rows(animal_dropdown.value):
+            if g != group:
+                group = g
+                rows.append(ft.Text(g, size=13, weight=ft.FontWeight.BOLD, color=AppColors.PRIMARY))
+            rows.append(ft.Row([
+                ft.Text(name, size=12, width=150, color=AppColors.TEXT_MAIN),
+                ft.Text(value, size=12, width=120, weight=ft.FontWeight.BOLD, color=AppColors.TEXT_MAIN),
+                ft.Text(meaning, size=12, expand=True, color=AppColors.TEXT_MUTED),
+            ], vertical_alignment=ft.CrossAxisAlignment.START))
+        advanced_rows.controls = rows
+        if e is not None:
+            page.update()
+
+    def on_species(e):  # species changes the jump limit and the recommended swing speed
+        update_advanced()
+        reset_swing(e)
+
+    animal_dropdown.on_select = on_species
+    update_advanced()
 
     btn_reset_swing = ft.IconButton(
         icon=ft.Icons.RESTART_ALT,
@@ -329,7 +352,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
     params_card = create_card(
         ft.Column([
             ft.Row([experiment_dropdown, animal_dropdown], spacing=15),
-            ft.Row([camera_dropdown, cutoff_dropdown], spacing=15),
+            ft.Row([cutoff_dropdown], spacing=15),
             hint("Movement window starts when the selected marker first moves and ends when the nose stops."),
         ], spacing=15),
         title="Experiment Setup",
@@ -340,6 +363,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         ft.Column([
             ft.Row([floor_dropdown], spacing=15),
             floor_hint,
+            ft.Row([camera_dropdown], spacing=15),
             height_cutoff_switch,
         ], spacing=10),
         title="Floor & Height Reference",
@@ -365,6 +389,22 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         icon=ft.Icons.SAVE_ALT
     )
 
+    advanced_card = create_card(
+        ft.ExpansionTile(
+            title=ft.Text("Show fixed filter settings", size=14, color=AppColors.TEXT_MAIN),
+            subtitle=ft.Text("Read-only. Tuned on ~800 files; removed frames are summarised per file in the log.",
+                             size=12, color=AppColors.TEXT_MUTED),
+            controls=[advanced_rows],
+            controls_padding=ft.Padding.only(bottom=10),
+            tile_padding=0,
+            # no expanded/collapsed border lines: the card divider above is the only line
+            shape=ft.RoundedRectangleBorder(),
+            collapsed_shape=ft.RoundedRectangleBorder(),
+        ),
+        title="Advanced Filter Settings",
+        icon=ft.Icons.TUNE
+    )
+
     return ft.ListView([
         ft.Text("Data Filtering", size=22, weight=ft.FontWeight.BOLD, color=AppColors.TEXT_MAIN),
         status_text,
@@ -374,6 +414,7 @@ def build_filtering_view(page: ft.Page) -> ft.Control:
         floor_card,
         swing_card,
         output_card,
+        advanced_card,
         ft.Row([run_btn, stop_btn], spacing=10),
         progress_bar,
         terminal.get_control()

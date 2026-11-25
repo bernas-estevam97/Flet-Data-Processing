@@ -100,8 +100,8 @@ def extract_data_from_excel(file_path, user_tags, start_week=4, interval=4):
         "median": "Median", 
         "min": "Min", 
         "max": "Max",
-        "max_normalized_mean": "Max_Normalized_Mean",
-        "cv": "CV"
+        "iqr": "IQR",
+        "p5-p95 range": "P5-P95 Range"
     }
     extracted_stats = {}
     
@@ -263,7 +263,7 @@ def main(argv=None):
         tag_headers.append("Timepoint")
 
     # --- PHASE 2: WRITE SEQUENTIALLY TO ONE EXCEL FILE ---
-    compiled_stats = {sheet: [] for sheet in ["Mean", "Std", "Median", "Min", "Max", "Max_Normalized_Mean", "CV"]}
+    compiled_stats = {sheet: [] for sheet in ["Mean", "Std", "Median", "Min", "Max", "IQR", "P5-P95 Range"]}
     compiled_durations = []
     master_header = None
 
