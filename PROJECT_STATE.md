@@ -138,5 +138,6 @@ Update dependencies with `uv add` (not by hand) so `pyproject.toml` and `uv.lock
 - Entry point: `src/main.py`. Processing scripts live directly in `src/` and expose `main(argv)`; register new ones in `task_main()` with a static import so PyInstaller bundles them.
 - New pool-based scripts should use `worker_count()` and fall back to `ThreadPoolExecutor` when `can_spawn_processes()` is False.
 - Output file name: both stats views have an optional "Output file name" field. `desc_analysis.py` takes it as argv[5], `desc_analysis_aio.py` as argv[8]. Forbidden Windows characters and a typed `.xlsx` are stripped; empty falls back to `<EXPERIMENT>_descriptive_statistics.xlsx` / `<EXPERIMENT>_AIO_descriptive_statistics.xlsx`.
+- ID ordering: `process_manager.sort_by_ids()` natural-sorts rows by `Ids` (stable, so rows with the same ID keep their order). Used on every sheet in `desc_analysis.py` and `desc_analysis_aio.py`, and on each merged sheet in `merge_excel.py` (sheets without `Ids` stay unsorted).
 - `ex_filtering.py`, `desc_analysis.py` and `desc_analysis_aio.py` also run standalone with interactive prompts when no arguments are given.
 - Keep the tutorial page and this file in sync with feature changes.

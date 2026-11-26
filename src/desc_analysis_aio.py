@@ -6,7 +6,7 @@ import pandas as pd
 import multiprocessing
 from multiprocessing import Pool, freeze_support
 from multiprocessing.pool import ThreadPool
-from process_manager import can_spawn_processes, worker_count
+from process_manager import can_spawn_processes, worker_count, sort_by_ids
 import numpy as np
 
 # Reconfigure stdout to utf-8 and line buffering
@@ -317,7 +317,7 @@ def main(argv=None):
                     else:
                         df_final = df
                         
-                    df_final.to_excel(writer, sheet_name=sheet_name, index=False)
+                    sort_by_ids(df_final).to_excel(writer, sheet_name=sheet_name, index=False)
 
             if compiled_durations:
                 duration_headers = ["Ids"] + tag_headers + ["Time Duration"]
@@ -329,7 +329,7 @@ def main(argv=None):
                 else:
                     df_duration_final = df_duration
                     
-                df_duration_final.to_excel(writer, sheet_name="Time Duration", index=False)
+                sort_by_ids(df_duration_final).to_excel(writer, sheet_name="Time Duration", index=False)
 
         if os.path.exists(temp_path):
             os.replace(temp_path, output_path)

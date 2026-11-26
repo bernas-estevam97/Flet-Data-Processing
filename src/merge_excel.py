@@ -1,6 +1,7 @@
 import sys
 import os
 import pandas as pd
+from process_manager import sort_by_ids
 
 def main(argv=None):
     argv = sys.argv if argv is None else argv
@@ -45,7 +46,7 @@ def main(argv=None):
     
     # 3. Merge and save
     try:
-        print("Merging sheets vertically...")
+        print("Merging sheets and ordering by ID...")
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             for sheet in all_sheets:
                 # Gather the dataframe for 'sheet' from every file
@@ -54,8 +55,8 @@ def main(argv=None):
                     df = file_dict.get(sheet, pd.DataFrame())
                     dfs_to_concat.append(df)
                 
-                # Concatenate them all at once
-                merged_df = pd.concat(dfs_to_concat, ignore_index=True)
+                # Concatenate them all at once, then order rows by ID
+                merged_df = sort_by_ids(pd.concat(dfs_to_concat, ignore_index=True))
                 merged_df.to_excel(writer, sheet_name=sheet, index=False)
                 print(f" - Sheet processed: {sheet}")
         

@@ -17,7 +17,7 @@ The app has four tools, available from the sidebar:
 | **1. Data Filtering** | Folder of raw MotoRater `.xlsx` files | One `*_filtered.xlsx` per file: trimmed, calibrated, with per-file statistics |
 | **2. Statistics** | Folder of `*_filtered.xlsx` files | One summary workbook (one sheet per statistic, one row per subject or trial) |
 | **3. Statistics – AIO** | Folder of `*_filtered.xlsx` files, your filename tags and your timepoint schedule | Same summary, with extra columns (group, gender, test, timepoint) parsed from file names |
-| **4. Merge Data** | Two or more Excel files with the same sheets | A single workbook where each sheet is stacked from all files |
+| **4. Merge Data** | Two or more Excel files with the same sheets | A single workbook where each sheet is stacked from all files and sorted by ID |
 
 A built-in **Tutorial** page explains every option in detail.
 
@@ -40,7 +40,7 @@ Files are processed in parallel on all CPU cores. If an output file already exis
 
 This tool collects the statistics from every filtered file into one Excel workbook. It creates one sheet per statistic (`Mean`, `Std`, `Median`, `Min`, `Max`, `IQR`, `P5-P95 Range`, `Time Duration`). Files filtered before the IQR/P5-P95 change still carry the old rows; filter them again to get the new sheets. You can average the repeated trials of each subject (`_1`, `_2`, …) or keep each trial as its own row.
 
-Both statistics tools have an optional **Output file name** field. Leave it empty to use the default name. The app adds `.xlsx` and removes characters Windows does not allow in file names.
+Both statistics tools sort every sheet by `Ids` (natural order, so M2 comes before M10). Both statistics tools have an optional **Output file name** field. Leave it empty to use the default name. The app adds `.xlsx` and removes characters Windows does not allow in file names.
 
 ### 3. Statistics – AIO (All-In-One)
 
@@ -72,7 +72,7 @@ becomes:
 
 ### 4. Merge Data
 
-This tool combines several workbooks into one. For each sheet name, it stacks the rows from every file. Use it to join results from different batches or experiments.
+This tool combines several workbooks into one. For each sheet name, it stacks the rows from every file, then sorts them by the `Ids` column. Use it to join results from different batches or experiments.
 
 ### Other features
 

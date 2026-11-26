@@ -1,6 +1,7 @@
 import asyncio
 import atexit
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -19,6 +20,18 @@ def can_spawn_processes() -> bool:
     False inside `flet build` apps, where Python is embedded in the Flutter exe.
     """
     return getattr(sys, "frozen", False) or os.path.basename(sys.executable).lower().startswith("python")
+
+
+def sort_by_ids(df, col: str = "Ids"):
+    """
+    Natural-sort rows by the ID column (M2 before M10). The sort is stable, so rows
+    sharing an ID keep their previous order (trials, tags, source file).
+    """
+    if col not in df.columns:
+        return df
+    def key(i):
+        return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(df[col].iat[i]))]
+    return df.iloc[sorted(range(len(df)), key=key)].reset_index(drop=True)
 
 
 SEQUENTIAL_ENV = "MOTORATER_SEQUENTIAL"
